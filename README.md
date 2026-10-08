@@ -63,12 +63,12 @@
 25 8 * * * python zcode_intl_daily.py
 ```
 
-## ☁️ 部署方式二：GitHub Actions（零服务器）
+## ☁️ 部署方式二：GitHub Actions（可选，默认手动触发）
 
 1. Fork 本仓库（或直接使用本仓库，Secrets 只能配在你自己的仓库里）。
 2. 打开 **Settings → Secrets and variables → Actions**，添加下表里的 Secrets。
 3. 打开 **Actions** 标签页，选择 `ZCode Daily`，点 **Run workflow** 手动跑一次验证。
-4. 之后会按内置 cron 自动运行（北京时间 每天 08:25）。
+4. 默认只支持**手动触发**（上游仓库不跑定时，避免空跑）；fork 后想定时，把 `.github/workflows/daily.yml` 里 `schedule:` 两行取消注释（cron 用 UTC，北京时间减 8 小时），之后就会按该时间自动执行。
 
 | Secret | 对应环境变量 | 必填 |
 |---|---|---|

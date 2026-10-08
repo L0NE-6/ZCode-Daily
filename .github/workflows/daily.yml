@@ -1,9 +1,11 @@
 name: ZCode Daily
 
 on:
-  schedule:
-    # 北京时间 每天 08:25（GitHub cron 用 UTC，北京时间 = UTC+8）
-    - cron: "25 0 * * *"
+  # 上游仓库默认不跑定时，避免空跑。
+  # fork 后想启用定时：把下面两行取消注释（cron 用 UTC，北京时间 = UTC+8）。
+  # 北京时间 每天 08:25
+  # schedule:
+  #   - cron: "25 0 * * *"
   workflow_dispatch:
 
 permissions:
