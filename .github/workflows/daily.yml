@@ -1,0 +1,53 @@
+name: ZCode Daily
+
+on:
+  schedule:
+    # 北京时间 每天 08:25（GitHub cron 用 UTC，北京时间 = UTC+8）
+    - cron: "25 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ZCode-Daily
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run ZCode CN
+        env:
+          ZCODE_CN_TOKENS: ${{ secrets.ZCODE_CN_TOKENS }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+        run: python zcode_cn_daily.py
+
+      - name: Run ZCode INTL
+        env:
+          ZCODE_INTL_TOKENS: ${{ secrets.ZCODE_INTL_TOKENS }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+        run: python zcode_intl_daily.py
+
