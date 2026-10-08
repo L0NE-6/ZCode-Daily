@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*_result.json
+zcode_cn_devices.json
+zcode_intl_devices.json
