@@ -12,6 +12,8 @@
 ℹ️ 区域：本脚本用于**国际版**账号（z.ai 侧签发的 JWT）；
    国内版账号请用 zcode_cn_daily.py，两边 JWT 不通用。
 
+🕐 时间口径：所有展示时间固定按北京时间（UTC+8）换算，不随宿主机时区变化。
+
 ⚠️ 验证码
    上游通常要求 `X-Aliyun-Captcha-Verify-Param`（阿里云无痕验证）。
    纯脚本无法自动求解，两种做法：
@@ -49,6 +51,7 @@ import platform as host_platform
 import sys
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -66,6 +69,10 @@ CLAIM_PATH = "/api/v1/zcode-plan/billing/claim"
 DEFAULT_APP_VERSION = "3.14.0"
 DEVICE_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zcode_intl_devices.json")
 
+# 展示时间固定按北京时间（UTC+8）：中国标准时间无夏令时，固定偏移即可，
+# 不依赖宿主机时区（青龙 / NAS / 海外 VPS 上口径一致）。
+BEIJING_TZ = timezone(timedelta(hours=8))
+
 ONLY = None
 PREVIEW_ONLY = False
 NO_NOTIFY = False
@@ -82,8 +89,12 @@ FAILURE_LABELS = {
 }
 
 
+def beijing_now():
+    return datetime.now(BEIJING_TZ)
+
+
 def log(msg):
-    print("%s %s" % (time.strftime("[%H:%M:%S]"), msg), flush=True)
+    print("%s %s" % (beijing_now().strftime("[%H:%M:%S]"), msg), flush=True)
 
 
 def mask(text, keep=6):
@@ -256,7 +267,7 @@ def format_time(seconds):
     if not seconds:
         return "立即"
     try:
-        return time.strftime("%Y-%m-%d %H:%M", time.localtime(int(seconds)))
+        return datetime.fromtimestamp(int(seconds), BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
     except Exception:
         return str(seconds)
 
@@ -488,7 +499,7 @@ def main():
             report.append("账号%d %s: ❌ %s" % (index, account["note"], error))
         time.sleep(2)
 
-    summary = "🎁 ZCode 国际版领套餐报告\n" + "\n".join(report) + "\n🕐 " + time.strftime("%Y-%m-%d %H:%M")
+    summary = "🎁 ZCode 国际版领套餐报告\n" + "\n".join(report) + "\n🕐 " + beijing_now().strftime("%Y-%m-%d %H:%M")
     log(summary)
     if not NO_NOTIFY and not PREVIEW_ONLY:
         notify_all("🎁 ZCode 国际版领套餐报告", summary)
