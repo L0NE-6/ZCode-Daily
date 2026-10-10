@@ -100,6 +100,7 @@ python zcode_login.py --region intl   # 国际版（z.ai）
 |---|---|---|
 | `ZCODE_CN_TOKENS` | `jwt\|device_mid` / `备注\|jwt\|device_mid`（可再加一段验证码参数） | 国内版账号 |
 | `ZCODE_INTL_TOKENS` | 同上 | 国际版账号 |
+| `ZCODE_ACTIVATION` | `0` / `1`（默认 `1`） | 领取前补报激活事件（`app_launch` / `app_daily_active`）；设 `0` 关闭 |
 
 ## ⌨️ 命令行参数
 

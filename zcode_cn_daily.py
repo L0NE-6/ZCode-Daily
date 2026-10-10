@@ -65,6 +65,7 @@ except Exception:
 
 ORIGIN = "https://zcode.z.ai"
 PREVIEW_PATH = "/api/v1/zcode-plan/billing/preview"
+EVENT_REPORT_PATH = "/api/v1/event/report"
 CLAIM_PATH = "/api/v1/zcode-plan/billing/claim"
 DEFAULT_APP_VERSION = "3.14.0"
 DEVICE_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zcode_cn_devices.json")
@@ -190,6 +191,100 @@ def stable_device_mid(jwt, provided, note):
     return mid
 
 
+
+# ---------- 激活事件上报 ----------
+# 领取资格的前置动作：官方客户端启动 / 日活时会向事件接口报两条
+# （app_launch、app_daily_active），运营系统据此发放资格，套餐探测才列得出来。
+# 纯脚本走不到那条链，所以领取前主动补报一次（失败只记一行日志，不阻断领取）。
+
+
+def local_timezone():
+    if host_platform.system().lower() != "windows":
+        return "unknown"
+    try:
+        import subprocess
+        out = subprocess.run(["tzutil", "/g"], capture_output=True, text=True, timeout=5)
+        name = (out.stdout or "").strip()
+        return {
+            "China Standard Time": "Asia/Shanghai",
+            "China Daylight Time": "Asia/Shanghai",
+            "Singapore Standard Time": "Asia/Singapore",
+            "Tokyo Standard Time": "Asia/Tokyo",
+            "UTC": "UTC",
+        }.get(name, "unknown")
+    except Exception:
+        return "unknown"
+
+
+def local_os_version():
+    if host_platform.system().lower() != "windows":
+        return ""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["reg", "query", r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+             "/v", "CurrentBuildNumber"],
+            capture_output=True, text=True, timeout=5)
+        for line in (out.stdout or "").splitlines():
+            if "CurrentBuildNumber" in line:
+                parts = line.split()
+                if parts:
+                    return "10.0." + parts[-1]
+    except Exception:
+        pass
+    return ""
+
+
+def os_category():
+    system = host_platform.system().lower()
+    if system == "windows":
+        return "windows"
+    if system == "darwin":
+        return "macos"
+    return "linux"
+
+
+def activation_event_body(event, user_id, device_mid):
+    return {
+        "event_id": str(uuid.uuid4()),
+        "client_timezone": local_timezone(),
+        "client_language": "zh-CN",
+        "element_name": event,
+        "event_region": "app",
+        "event_type": "view",
+        "event_text": "",
+        "event_extra_detail": {},
+        "user_id": user_id,
+        "screen_resolution": "2560x1440",
+        "app_version": app_version(),
+        "device_os_category": os_category(),
+        "device_os_version": local_os_version(),
+        "device_mid": device_mid,
+        "source_page": "",
+        "source_element": "{}",
+    }
+
+
+def report_activation(user_id, device_mid):
+    """补报 app_launch / app_daily_active；返回 (是否成功, 说明)。"""
+    if os.environ.get("ZCODE_ACTIVATION", "1").strip() == "0":
+        return False, "已关闭激活事件上报"
+    if not user_id:
+        return False, "缺少用户标识，跳过激活事件上报"
+    url = ORIGIN + EVENT_REPORT_PATH
+    errors = []
+    for event in ("app_launch", "app_daily_active"):
+        try:
+            response = request("POST", url, headers={}, body=activation_event_body(event, user_id, device_mid), timeout=10)
+            payload = json_of(response)
+            if response.status_code != 200 or payload.get("code") != 0:
+                errors.append("%s: HTTP %s code=%s" % (event, response.status_code, payload.get("code")))
+        except Exception as error:
+            errors.append("%s: %s" % (event, error))
+    if errors:
+        return False, "；".join(errors)
+    return True, "ok"
+
 # ---------- 上游协议 ----------
 
 def preview(region_jwt, device_mid):
@@ -286,6 +381,11 @@ def describe_plan(plan):
 
 
 def do_claim(account):
+    activation_ok, activation_note = report_activation(account.get("user_id", ""), account["device_mid"])
+    if activation_ok:
+        log("   📣 已补报激活事件（app_launch / app_daily_active）")
+    else:
+        log("   ℹ️ 激活事件未上报: %s" % activation_note)
     preview_response = preview(account["jwt"], account["device_mid"])
     if preview_response.status_code == 404:
         return False, "领取接口尚未部署（活动未上线）"
@@ -428,6 +528,27 @@ def looks_like_jwt(value):
     return value.startswith("eyJ") or value.count(".") >= 2
 
 
+def jwt_user_id(jwt):
+    """从 JWT 载荷里取用户标识（激活事件上报用）；取不到返回空串。"""
+    try:
+        payload = jwt.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return ""
+    for key in ("user_id", "userId", "uid", "sub", "id"):
+        value = claims.get(key) if isinstance(claims, dict) else None
+        if isinstance(value, (str, int)) and str(value).strip():
+            return str(value).strip()
+    data = claims.get("data") if isinstance(claims, dict) else None
+    if isinstance(data, dict):
+        for key in ("id", "user_id", "uid"):
+            value = data.get(key)
+            if isinstance(value, (str, int)) and str(value).strip():
+                return str(value).strip()
+    return ""
+
+
 def parse_accounts(raw):
     accounts = []
     default_captcha = os.environ.get("ZCODE_CAPTCHA_PARAM", "").strip()
@@ -458,7 +579,8 @@ def parse_accounts(raw):
         if not captcha:
             captcha = default_captcha
         mid = stable_device_mid(jwt, mid, note)
-        accounts.append({"note": note, "jwt": jwt, "device_mid": mid, "captcha": captcha})
+        accounts.append({"note": note, "jwt": jwt, "device_mid": mid, "captcha": captcha,
+                         "user_id": jwt_user_id(jwt)})
     return accounts
 
 
