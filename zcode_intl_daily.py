@@ -418,10 +418,19 @@ def do_claim(account):
         return True, "领取成功: %s（%s ~ %s）" % (plan["name"], format_time(starts), format_time(ends))
 
     label = FAILURE_LABELS.get(code)
+    if code == 1003:
+        return True, "该账号已领取过这一期"
     if label is None:
         label = first_text(body.get("msg"), body.get("message")) or ("HTTP %s" % response.status_code)
+    if code == 1005:
+        plan = (body.get("data") or {}).get("plan") if isinstance(body.get("data"), dict) else {}
+        ends = plan.get("ends_at", plan.get("endsAt")) if isinstance(plan, dict) else None
+        if ends:
+            return False, "领取未成功: %s（下轮重试不早于 %s）" % (label, format_time(ends))
     if code == 3007 and not account["captcha"]:
         label += "；从浏览器抓一次 claim 请求，把该头填到账号行第 4 段或 ZCODE_CAPTCHA_PARAM"
+    if code == 3001:
+        label += "；检查 device_mid 与客户端版本；若带验证码，确认参数未过期"
     return False, "领取未成功: %s（code=%s）" % (label, code)
 
 
