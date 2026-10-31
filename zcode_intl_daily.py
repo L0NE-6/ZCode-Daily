@@ -29,7 +29,7 @@
        备注|jwt|device_mid|captcha_param
      device_mid 留空会自动生成固定 UUID 存到 zcode_intl_devices.json
    ZCODE_PLAN_ID       【可选】强制领取指定 plan_id
-   ZCODE_APP_VERSION   【可选】客户端版本，默认 3.14.0
+ZCODE_APP_VERSION   【可选】客户端版本，默认 3.16.2
    ZCODE_CAPTCHA_PARAM 【可选】全局验证码参数（会覆盖未填写 captcha 的账号）
 
    推送通道（均可选）：PUSHPLUS_TOKEN / BARK_URL / WECOM_WEBHOOK / DINGTALK_WEBHOOK / DINGTALK_SECRET
@@ -67,7 +67,7 @@ ORIGIN = "https://zcode.z.ai"
 PREVIEW_PATH = "/api/v1/zcode-plan/billing/preview"
 EVENT_REPORT_PATH = "/api/v1/event/report"
 CLAIM_PATH = "/api/v1/zcode-plan/billing/claim"
-DEFAULT_APP_VERSION = "3.14.0"
+DEFAULT_APP_VERSION = "3.16.2"
 DEVICE_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zcode_intl_devices.json")
 
 # 展示时间固定按北京时间（UTC+8）：中国标准时间无夏令时，固定偏移即可，

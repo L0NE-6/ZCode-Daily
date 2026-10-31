@@ -39,7 +39,7 @@ ORIGIN = "https://zcode.z.ai"
 INIT_PATH = "/api/v1/oauth/cli/init"
 POLL_PATH = "/api/v1/oauth/cli/poll"
 PREVIEW_PATH = "/api/v1/zcode-plan/billing/preview"
-APP_VERSION = os.environ.get("ZCODE_APP_VERSION", "").strip() or "3.14.0"
+APP_VERSION = os.environ.get("ZCODE_APP_VERSION", "").strip() or "3.16.2"
 POLL_TIMEOUT = 300
 POLL_FALLBACK = 2
 
