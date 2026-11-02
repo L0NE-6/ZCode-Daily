@@ -18,7 +18,7 @@
   <a href="https://github.com/L0NE-6/ZCode-Daily/releases"><img src="https://img.shields.io/badge/%E2%AC%87%20Download-Releases-2ea44f?style=for-the-badge&logo=github" alt="Download Releases" /></a>
 </p>
 
-[✨ 30 秒速览](#quick-overview) · [🎯 领取逻辑](#claim-flow) · [🚀 青龙部署](#quick-boot) · [☁️ Actions](#actions) · [🔐 授权登录](#credentials) · [🔧 环境变量](#environment) · [✅ 成功判据](#result) · [✦ 星轨](#star-trail)
+[✨ 30 秒速览](#quick-overview) · [🎯 领取逻辑](#claim-flow) · [🚀 青龙部署](#quick-boot) · [☁️ Actions](#actions) · [🔐 授权登录](#credentials) · [🔧 环境变量](#environment) · [✅ 成功判据](#result) · [🚫 使用边界](#usage-policy) · [✦ 星轨](#star-trail)
 
 </div>
 
@@ -211,6 +211,17 @@ python zcode_login.py --no-verify
 
 本项目用于学习与个人自动化。请遵守对应平台的服务条款，并自行承担运行风险。
 
+<a id="usage-policy"></a>
+## 🚫 使用边界与转载声明
+
+本项目仓库、脚本、部署说明和 Release 下载始终免费公开。未经作者明确书面许可，禁止将本项目包装为付费资源、内部版、独家版、会员权益、收费课程、付费部署或包更新服务；禁止搬运到其他账号、群组、频道、网盘、电商或付费平台进行涨粉、截流、倒卖和引流；禁止删除作者与版权信息后冒充原创；禁止使用作者昵称、头像、二维码和项目名称制造官方授权假象。
+
+> 如需商业合作、品牌授权、联合分发或使用作者名义提供付费服务，请先取得作者明确书面授权。完整规则、收款码防诈骗说明和违规处理方式见 **[NOTICE.md](NOTICE.md)**。
+
+> 官方仓库和 Release 始终免费。第三方以“下载费 / 激活费 / 内部版 / 代部署 / 会员门槛”等名义收费，均与作者无关，请停止付款并保留证据。
+
+> 对上述违规行为，作者有权要求立即停止传播、删除内容并下架相关商品或页面；并可视情况暂停更新、归档或删除本仓库及相关 Release、向平台投诉或采取进一步必要措施。
+
 <a id="support"></a>
 
 ## ☕ 支持与反馈
@@ -227,6 +238,8 @@ python zcode_login.py --no-verify
   <img src="assets/donate-alipay.jpg" width="240" alt="支付宝收款码" />
 </p>
 <p align="center"><sub>微信支付（左） · 支付宝（右）</sub></p>
+
+> ⚠️ 收款码仅用于向作者自愿赞赏。任何第三方以代下载、代部署、内部资源或会员群为由收费，均与作者无关，请停止付款并保留证据。
 
 <a id="star-trail"></a>
 

@@ -73,6 +73,14 @@ A claim succeeds when the server returns HTTP 200, `code=0`, and a plan object w
 
 `zcode_cn_devices.json` and `zcode_intl_devices.json` contain stable device identifiers and are ignored by Git. Never publish JWT values, user IDs, captcha parameters, or device state files in an issue or pull request.
 
+## Usage and redistribution
+
+Official versions of this project are free, including the repository, scripts, deployment instructions, and Releases.
+
+Without explicit written permission from the author, do not repackage the project as a paid resource, internal or exclusive edition, membership benefit, paid course, paid deployment, or update service; do not repost it to unrelated accounts, groups, or channels for traffic or lead generation; do not remove author or copyright notices or claim the work as your own; do not use the author's name, avatar, QR codes, or project name to imply official endorsement.
+
+Violations may result in a takedown request. The author may pause updates, archive, or remove the repository. See [NOTICE.md](../NOTICE.md) for the complete rules.
+
 ## Project Links
 
 - [Releases](https://github.com/L0NE-6/ZCode-Daily/releases)

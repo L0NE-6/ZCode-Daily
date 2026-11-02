@@ -73,6 +73,14 @@ O resgate só é confirmado com HTTP 200, `code=0` e um objeto de plano com per�
 
 `zcode_cn_devices.json` e `zcode_intl_devices.json` contêm identificadores fixos de dispositivo e são ignorados pelo Git. Não publique JWT, ID de usuário, parâmetros de CAPTCHA ou arquivos de estado em uma issue ou pull request.
 
+## Limites de uso e redistribuição
+
+As versões oficiais deste projeto são gratuitas, incluindo o repositório, os scripts, as instruções de implantação e os Releases.
+
+Sem autorização escrita explícita do autor, não empacote o projeto como recurso pago, edição interna ou exclusiva, benefício de assinatura, curso pago, implantação paga ou serviço de atualização; não o republique em contas, grupos ou canais sem relação para gerar tráfego ou captar usuários; não remova avisos de autoria e direitos autorais nem reivindique o trabalho como seu; não use o nome, avatar, QR codes ou nome do projeto para sugerir endosso oficial.
+
+Em caso de violação, o autor pode solicitar a remoção do conteúdo e pode pausar atualizações, arquivar ou excluir o repositório. Consulte [NOTICE.md](../NOTICE.md) para as regras completas.
+
 ## Links
 
 - [Releases](https://github.com/L0NE-6/ZCode-Daily/releases)
