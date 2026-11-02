@@ -1,192 +1,255 @@
 <div align="center">
 
+<sub><strong>L0NE-6 · DAILY SIGNAL</strong></sub>
+
 # 🎁 ZCode Daily
 
-**ZCode 国内版 / 国际版 领套餐 · 单文件青龙脚本 · 多账号**
+**读取 ZCode 国内版与国际版可领套餐，按优先级领取并回显有效期的单文件脚本。**
 
-<img src="https://img.shields.io/github/v/release/L0NE-6/ZCode-Daily?style=flat-square&label=Release&color=2ea44f" />
-<img src="https://img.shields.io/github/stars/L0NE-6/ZCode-Daily?style=flat-square&label=Stars&color=FFC75F" />
-<img src="https://img.shields.io/badge/Python-3.8%2B-3776AB?style=flat-square&logo=python&logoColor=white" />
-<img src="https://img.shields.io/badge/%E9%9D%92%E9%BE%99%E9%9D%A2%E6%9D%BF-%E5%8D%95%E6%96%87%E4%BB%B6%E8%BF%90%E8%A1%8C-4EAA25?style=flat-square" />
-<img src="https://img.shields.io/badge/GitHub%20Actions-%E6%94%AF%E6%8C%81-2088FF?style=flat-square&logo=githubactions&logoColor=white" />
-<img src="https://img.shields.io/badge/%E5%A4%9A%E8%B4%A6%E5%8F%B7-%E6%8D%A2%E8%A1%8C%E6%88%96%20%26%20%E5%88%86%E9%9A%94-8957E5?style=flat-square" />
-<img src="https://img.shields.io/badge/License-MIT-F472B6?style=flat-square" />
+[简体中文](README.md) · [English](docs/README.en.md) · [繁體中文](docs/README.zh-Hant.md) · [日本語](docs/README.ja.md) · [한국어](docs/README.ko.md) · [Português (BR)](docs/README.pt-BR.md)
+
+<p>
+  <img src="https://img.shields.io/github/v/release/L0NE-6/ZCode-Daily?style=for-the-badge&label=Release&color=2ea44f&logo=github" alt="Release" />
+  <img src="https://img.shields.io/github/stars/L0NE-6/ZCode-Daily?style=for-the-badge&label=Stars&color=FFC75F&logo=github" alt="Stars" />
+  <img src="https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.8+" />
+  <img src="https://img.shields.io/badge/%E9%9D%92%E9%BE%99-%E5%8D%95%E6%96%87%E4%BB%B6-4EAA25?style=for-the-badge" alt="Qinglong" />
+  <img src="https://img.shields.io/badge/GitHub%20Actions-Supported-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="GitHub Actions" />
+  <img src="https://img.shields.io/badge/License-MIT-F472B6?style=for-the-badge" alt="MIT License" />
+  <a href="https://github.com/L0NE-6/ZCode-Daily/releases"><img src="https://img.shields.io/badge/%E2%AC%87%20Download-Releases-2ea44f?style=for-the-badge&logo=github" alt="Download Releases" /></a>
+</p>
+
+[✨ 30 秒速览](#quick-overview) · [🎯 领取逻辑](#claim-flow) · [🚀 青龙部署](#quick-boot) · [☁️ Actions](#actions) · [🔐 授权登录](#credentials) · [🔧 环境变量](#environment) · [✅ 成功判据](#result) · [✦ 星轨](#star-trail)
 
 </div>
 
 ---
 
-## ✨ 这是什么
+<a id="quick-overview"></a>
 
-完成 ZCode 限时套餐的预览与领取：读取可领套餐 → 按优先级选择 → 领取并回显有效期。国内版与国际版各一个签到脚本，共用同一个网页授权登录工具。
+## ✨ 30 秒速览
 
-> 🎯 一句话：**配好 Token，剩下的交给它。**
->
-> 📦 单文件自包含：不需要额外模块，青龙上传脚本、填好环境变量就能跑。
->
-> ☁️ 除了青龙，也可以直接跑在 **GitHub Actions** 上，零服务器定时执行（见下文部署方式二）。
+| 维度 | 说明 |
+| :--- | :--- |
+| **用途** | 预览并领取 ZCode 国内版或国际版当前可领取的限时套餐。 |
+| **输入** | `ZCODE_CN_TOKENS` / `ZCODE_INTL_TOKENS`；按需配置套餐 ID、客户端版本、验证码与激活上报。 |
+| **输出** | 目标套餐、领取结果、套餐有效期和服务端名额恢复时间。 |
+| **部署** | 青龙面板、GitHub Actions，或本地 Python 运行。 |
+| **依赖** | Python 3.8+，仅需 `requests`。 |
+| **成功判据** | HTTP 200 且业务 `code=0`，回执含套餐对象与有效期；`1003` 表示本期已领取，按成功状态处理。 |
 
-核心特性：
+<a id="signals"></a>
 
-- 🎁 **自动领套餐**：按 `priority` 选最优套餐；`1003` 已领取按成功处理，`1005` 展示名额恢复窗口
-- 🌍 **国内 + 国际**：两个脚本分别对应 bigmodel 与 z.ai 账号，互不干扰
-- 🔐 **网页授权登录**：CLI OAuth 轮询，登录不需要验证码
-- 👥 **多账号**：环境变量换行或 `&` 分隔
-- 📢 **多渠道推送** + 🐧 **青龙 / Actions 双部署**
-- 🕐 **时间口径**：日志与套餐时间统一按北京时间（UTC+8）展示，不跟随宿主机时区
+## 🎯 核心能力
+
+- 🎁 **按优先级选套餐**：读取可领列表，使用 `priority` 选择最高优先级套餐，同优先级保留先出现者。
+- 🌍 **国内 / 国际分流**：两个脚本分别使用 bigmodel 与 z.ai 账号体系，Token 不通用。
+- 🔐 **网页授权登录**：命令行 OAuth 轮询，无需在脚本里输入验证码登录账号。
+- 🧭 **默认客户端版本更新**：当前默认 `app_version=3.16.2`，低于活动门槛时不会继续使用旧版本空跑。
+- 📣 **激活事件补报**：领取前上报 `app_launch` / `app_daily_active`，失败只记日志，不阻断领取。
+- 🧾 **状态语义完整**：`1003` 已领取按成功，`1005` 显示服务端结束时间，`3001` / `3007` 分别提示设备与验证码问题。
+- 🕐 **固定北京时间**：日志与套餐时间统一按 UTC+8 展示，不跟随宿主机时区。
+
+<a id="claim-flow"></a>
+
+## 🔁 领取逻辑
+
+```text
+GET  /api/v1/zcode-plan/billing/preview?app_version=...&platform=...
+POST /api/v1/event/report          # app_launch / app_daily_active
+POST /api/v1/zcode-plan/billing/claim
+{"plan_id": "..."}
+```
+
+1. 按账号 JWT 载荷提取用户标识，补报两条激活事件。
+2. 读取可领套餐；指定 `ZCODE_PLAN_ID` 时优先匹配该套餐。
+3. 未指定时选择 `priority` 最高的套餐。
+4. 发起领取并解析套餐对象、开始时间与结束时间。
+5. `--preview` 只预览目标套餐，不发送领取请求。
+
+> 验证码参数不会自动求解。若上游返回 `3007`，请从浏览器抓取一次 `claim` 请求中的 `X-Aliyun-Captcha-Verify-Param`，填入账号行或 `ZCODE_CAPTCHA_PARAM`。
 
 ## 📦 文件说明
 
-| 文件 | 作用 |
-|---|---|
-| `zcode_login.py` | 网页授权登录（国内 / 国际） |
-| `zcode_cn_daily.py` | 国内版领套餐 |
-| `zcode_intl_daily.py` | 国际版领套餐 |
+| 文件 | 用途 |
+| :--- | :--- |
+| `zcode_login.py` | 国内版 / 国际版网页授权登录 |
+| `zcode_cn_daily.py` | 国内版套餐预览与领取 |
+| `zcode_intl_daily.py` | 国际版套餐预览与领取 |
+| `requirements.txt` | Python 依赖清单 |
 
-## ⬇️ 下载
+<a id="quick-boot"></a>
 
-不想用 git？直接到 **[Releases](https://github.com/L0NE-6/ZCode-Daily/releases)** 下载：
+## 🚀 青龙部署
 
-- 完整包 zip（脚本 + 登录工具 + README + Actions 工作流 + 收款码）
-- 各脚本单文件（青龙只需要上传签到脚本）
-- `SHA256SUMS.txt` 完整性校验
+1. 安装依赖：`python3 -m pip install -r requirements.txt`。
+2. 上传需要的签到脚本到青龙「脚本管理」。
+3. 添加国内版和/或国际版账号变量。
+4. 用青龙运行器建立定时任务。
 
-## 🚀 部署方式一：青龙面板（三步）
-
-| 步骤 | 操作 |
-| :---: | :--- |
-| 1 | 安装依赖：`pip install -r requirements.txt`（或 `pip3 install requests`） |
-| 2 | 把签到脚本上传到青龙「脚本管理」，或把仓库放进脚本目录 |
-| 3 | 「环境变量」里添加 Token，新建定时任务（见下方 cron 示例） |
-
-```cron
-25 8 * * * python zcode_cn_daily.py
-25 8 * * * python zcode_intl_daily.py
+```text
+# 每天北京时间 08:25，可分别启用
+25 8 * * * task zcode_cn_daily.py
+25 8 * * * task zcode_intl_daily.py
 ```
 
-## ☁️ 部署方式二：GitHub Actions（可选，默认手动触发）
+<a id="actions"></a>
 
-1. Fork 本仓库（或直接使用本仓库，Secrets 只能配在你自己的仓库里）。
-2. 打开 **Settings → Secrets and variables → Actions**，添加下表里的 Secrets。
-3. 打开 **Actions** 标签页，选择 `ZCode Daily`，点 **Run workflow** 手动跑一次验证。
-4. 默认只支持**手动触发**（上游仓库不跑定时，避免空跑）；fork 后想定时，把 `.github/workflows/daily.yml` 里 `schedule:` 两行取消注释（cron 用 UTC，北京时间减 8 小时），之后就会按该时间自动执行。
+## ☁️ GitHub Actions
 
-| Secret | 对应环境变量 | 必填 |
-|---|---|---|
-| `ZCODE_CN_TOKENS` | ZCODE_CN_TOKENS | 国内版，可留空 |
-| `ZCODE_INTL_TOKENS` | ZCODE_INTL_TOKENS | 国际版，可留空 |
-| `PUSHPLUS_TOKEN` / `BARK_URL` / `WECOM_WEBHOOK` / `DINGTALK_WEBHOOK` / `DINGTALK_SECRET` | 同名推送变量 | 可选 |
+1. Fork 或导入仓库到自己的账号。
+2. 在 **Settings → Secrets and variables → Actions** 新建 Secrets。
+3. 从 **Actions → ZCode Daily → Run workflow** 手动验证。
+4. 默认仅手动触发；需要定时时，在 `.github/workflows/daily.yml` 取消 `schedule:` 两行注释。cron 使用 UTC。
 
-> 公开仓库的 Secrets 是加密的，日志里不会回显；脚本也不会把 Token 写进仓库文件。
+| Secret | 必填 | 说明 |
+| :--- | :---: | :--- |
+| `ZCODE_CN_TOKENS` | 可选 | 只跑国际版时可留空 |
+| `ZCODE_INTL_TOKENS` | 可选 | 只跑国内版时可留空 |
+| `PUSHPLUS_TOKEN` / `BARK_URL` | 可选 | PushPlus / Bark |
+| `WECOM_WEBHOOK` / `DINGTALK_WEBHOOK` / `DINGTALK_SECRET` | 可选 | 企业微信 / 钉钉 |
 
-## 🔑 获取 Token
+> 仓库现有 Actions 工作流直接映射账号与推送 Secrets。`ZCODE_PLAN_ID`、`ZCODE_APP_VERSION`、`ZCODE_CAPTCHA_PARAM`、`ZCODE_ACTIVATION` 可在青龙或本地环境变量中设置；如要在 Actions 使用，需要同步把变量映射进 workflow。
+
+<a id="credentials"></a>
+
+## 🔐 获取 Token
 
 ```bash
-python zcode_login.py                 # 国内版（bigmodel）
-python zcode_login.py --region intl   # 国际版（z.ai）
+python zcode_login.py
+python zcode_login.py --region intl
+python zcode_login.py --region intl --note 国际主号
+python zcode_login.py --no-verify
 ```
 
-浏览器完成登录后工具自动轮询，输出一行 `jwt|device_mid`，粘贴进 `ZCODE_CN_TOKENS` 或 `ZCODE_INTL_TOKENS`。
-
-> `device_mid` 是固定设备标识，用于风控关联同一设备；登录工具会生成并输出，保持固定不要更换。
-
-**如果领取时提示验证码**：在浏览器抓一次 `claim` 请求，把 `X-Aliyun-Captcha-Verify-Param` 的值作为该账号的最后一个字段填进去即可。
-
-## 🧩 环境变量（支持多账号）
-
-> 多账号用 **换行** 或 **`&`** 分隔，两种可以混用。`|` 是单条账号内部的字段分隔符，备注里不要再写 `|`。
-
-| 环境变量 | 单条格式 | 说明 |
-|---|---|---|
-| `ZCODE_CN_TOKENS` | `jwt\|device_mid` / `备注\|jwt\|device_mid`（可再加一段验证码参数） | 国内版账号 |
-| `ZCODE_INTL_TOKENS` | 同上 | 国际版账号 |
-| `ZCODE_ACTIVATION` | `0` / `1`（默认 `1`） | 领取前补报激活事件（`app_launch` / `app_daily_active`）；设 `0` 关闭 |
-
-## ⌨️ 命令行参数
+浏览器完成授权后，工具轮询 CLI OAuth 状态并输出一行 `备注|jwt|device_mid`，分别填入 `ZCODE_CN_TOKENS` 或 `ZCODE_INTL_TOKENS`。
 
 | 参数 | 作用 |
-|---|---|
-| `--preview` | 只读预览，不发领取请求 |
-| `--only 2` | 只跑第 2 个账号 |
-| `--no-notify` | 关闭推送 |
+| :--- | :--- |
+| `--region cn` | 国内版 bigmodel，默认值 |
+| `--region intl` | 国际版 z.ai |
+| `--note 主号` | 添加账号备注 |
+| `--no-verify` | 跳过登录后的套餐列表校验 |
 
-## 📊 运行效果示例
+`device_mid` 用于风控关联同一设备。登录工具会生成固定 UUID；若账号行未提供，签到脚本也会为 JWT 生成并保存固定值。
+
+<a id="environment"></a>
+
+## 🔧 环境变量与参数
+
+多账号使用换行或 `&` 分隔。单条账号使用 `|` 分隔字段，备注中不要包含 `|`。
+
+| 环境变量 | 格式 | 说明 |
+| :--- | :--- | :--- |
+| `ZCODE_CN_TOKENS` | `jwt\|device_mid` / `备注\|jwt\|device_mid` / `备注\|jwt\|device_mid\|captcha` | 国内版账号 |
+| `ZCODE_INTL_TOKENS` | 同上 | 国际版账号 |
+| `ZCODE_PLAN_ID` | 套餐 ID | 强制领取指定套餐 |
+| `ZCODE_APP_VERSION` | 版本号 | 覆盖默认客户端版本，默认 `3.16.2` |
+| `ZCODE_CAPTCHA_PARAM` | 验证码参数 | 为未单独填写验证码的账号提供全局值 |
+| `ZCODE_ACTIVATION` | `1` / `0` | 领取前补报激活事件，默认 `1` |
+| `PUSHPLUS_TOKEN` / `BARK_URL` | Token / URL | 可选推送 |
+| `WECOM_WEBHOOK` / `DINGTALK_WEBHOOK` / `DINGTALK_SECRET` | Webhook / 加签密钥 | 可选推送 |
+| `QL_URL` / `QL_TOKEN` | 面板地址 / 旧版面板 Token | 可选青龙通知 |
+
+| 参数 | 作用 |
+| :--- | :--- |
+| `--preview` | 只读预览目标套餐，不领取 |
+| `--only 2` | 只跑第 2 个账号 |
+| `--no-notify` | 关闭本轮推送 |
+
+<a id="result"></a>
+
+## ✅ 成功判据与状态码
+
+- 领取成功：HTTP 200、`code=0`，且 `data.plan` 含套餐对象；报告套餐名称与 UTC+8 有效期。
+- `1003`：该账号已领取本期套餐，按成功幂等状态处理。
+- `1005`：本轮名额或次数已用完；若服务端返回套餐结束时间，会给出下一轮重试不早于该时间。
+- `3001`：重点检查 `device_mid`、客户端版本与验证码是否过期。
+- `3007`：验证码未通过；补充 `X-Aliyun-Captcha-Verify-Param`。
+- 无套餐可能是活动未开始、已结束或账号无资格，脚本如实报告。
 
 ```text
 [08:25:01] 👤 [1] 主号  jwt=eyJhbGci****abcd  mid=1111...
-[08:25:02]    🎯 目标套餐: Start Plan：额度 1000000tokens（每日）
+[08:25:02]    🎯 目标套餐: Start Plan：额度 1000000 tokens（每日）
 [08:25:03]    ✅ 领取成功: Start Plan（2026-10-09 10:00 ~ 2026-10-10 09:59）
 ```
 
-## 🗂️ 数据文件说明
+<a id="data-privacy"></a>
+
+## 🗂️ 数据文件与隐私
 
 | 文件 | 内容 | 是否提交 |
-|---|---|---|
-| `zcode_cn_devices.json` | 国内版账号的 device_mid | 已忽略 |
-| `zcode_intl_devices.json` | 国际版账号的 device_mid | 已忽略 |
+| :--- | :--- | :---: |
+| `zcode_cn_devices.json` | 国内版账号的固定 `device_mid` | 否，已忽略 |
+| `zcode_intl_devices.json` | 国际版账号的固定 `device_mid` | 否，已忽略 |
 
-> 以上文件都包含账号凭据，已在 `.gitignore` 中排除，**不要手动提交**。
+- 仓库不内置账号、手机号、JWT 或设备标识。
+- 凭据由环境变量或 GitHub Secrets 注入。
+- 设备文件按 JWT 的哈希索引保存；JWT 本身不应出现在 Issue。
+- 当前用户标识从 JWT 载荷读取；读取失败时跳过激活补报，不伪造身份。
 
 ## ❓ 常见问题
 
-- **提示 3007 验证码？** 领取环节的风控要求，按上面说明抓一次 `X-Aliyun-Captcha-Verify-Param` 补进账号行。
-- **国内版 JWT 能用在国际版吗？** 不能，两边账号体系不同。
-- **没有可领套餐？** 活动未开始/已结束或账号没有资格，脚本会如实提示。
+**提示 `3007` 验证码怎么办？**
+从浏览器抓取一次 `claim` 请求中的 `X-Aliyun-Captcha-Verify-Param`，追加到账号行作为第四个字段，或设置 `ZCODE_CAPTCHA_PARAM`。
 
-## 📁 目录结构
+**国内版 JWT 能用在国际版吗？**
+不能。bigmodel 与 z.ai 是不同账号体系，请分别登录并填写对应变量。
 
-```text
-ZCode-Daily/
-├── zcode_login.py
-├── zcode_cn_daily.py
-├── zcode_intl_daily.py
-├── assets/
-├── .github/workflows/daily.yml
-├── CHANGELOG.md
-├── LICENSE
-├── README.md
-└── requirements.txt
-```
+**为什么套餐列表为空？**
+活动可能未开始或已结束、账号无资格，或客户端版本低于门槛。当前默认版本为 `3.16.2`，必要时用 `ZCODE_APP_VERSION` 覆盖。
+
+**`1003` 是失败吗？**
+不是。它表示本期已经领取过，脚本按成功状态报告。
+
+<a id="release"></a>
 
 ## 📦 版本与发布
 
-- 每次更新单独发一个 Release：`v1.0.0` → `v1.0.1` …，历史版本保留可下载。
-- 每个 Release 附带：完整包 zip + 各脚本单文件 + `SHA256SUMS.txt`。
-- 下载页：<https://github.com/L0NE-6/ZCode-Daily/releases>
+当前 CHANGELOG 记录最新版本为 `v1.0.5`（2026-10-31）。每个版本单独发布 Release，附完整包、脚本单文件与 `SHA256SUMS.txt`。下载页：[Releases](https://github.com/L0NE-6/ZCode-Daily/releases)。
 
-## 🔒 隐私说明
+## ⚠️ 说明
 
-- 脚本**不含任何账号、手机号、Token 或设备信息**，全部由环境变量（或 GitHub Secrets）注入。
-- 运行期生成的数据文件（见「数据文件说明」）都包含凭据，已被 `.gitignore` 排除。
-- 请勿把 Token 写进脚本、提交到仓库或发到 Issue 里。
+本项目用于学习与个人自动化。请遵守对应平台的服务条款，并自行承担运行风险。
 
-## ⚠️ 免责声明
+<a id="support"></a>
 
-本项目仅供**学习与个人自动化**使用。请遵守对应平台的服务条款，使用风险自负。
+## ☕ 支持与反馈
 
-## ☕ 支持与投喂
+脚本完全免费，支持不影响任何功能。
 
-脚本是**完全免费、无广告、无功能限制**的，仓库与发布包也不含你的任何数据。
-如果它确实帮你省了时间，欢迎请我喝杯咖啡 —— **纯自愿，不影响任何功能**。
+- [提交 Issue](https://github.com/L0NE-6/ZCode-Daily/issues)：请附运行日志、复现步骤与脱敏后的状态码。
+- [发起 Pull Request](https://github.com/L0NE-6/ZCode-Daily/pulls)：欢迎修复、测试与文档贡献。
+- [点一个 Star](https://github.com/L0NE-6/ZCode-Daily)：让更多使用者找到这个项目。
 
 <p align="center">
   <img src="assets/donate-wechat.png" width="240" alt="微信赞赏码" />
   &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="assets/donate-alipay.jpg" width="240" alt="支付宝收款码" />
 </p>
-<p align="center"><sub>💚 微信支付（左） &nbsp;|&nbsp; 💙 支付宝（右）</sub></p>
+<p align="center"><sub>微信支付（左） · 支付宝（右）</sub></p>
 
-> 💡 **不花钱也能帮上忙**：点个 ⭐ Star、提一个带日志的 Issue、发一个 Pull Request，或者把脚本分享给需要的朋友。
+<a id="star-trail"></a>
 
-## 💬 反馈与贡献
+## ✦ 星轨 Star Trail
 
-- 提交 [Issue](https://github.com/L0NE-6/ZCode-Daily/issues)：报 bug、提需求
-- 发起 [Pull Request](https://github.com/L0NE-6/ZCode-Daily/pulls)：直接贡献代码
+> 活动会结束，名额会变化；每一次 Star 都在为这条自动化轨迹保留一个发光的节点。
 
-> 提 Issue 时附上**运行日志**和**复现步骤**，定位会快很多。
+<a href="https://star-history.com/#L0NE-6/ZCode-Daily&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=l0ne-6/zcode-daily&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=l0ne-6/zcode-daily&type=Date&theme=light" />
+    <img alt="ZCode Daily Star Trail" src="https://api.star-history.com/svg?repos=l0ne-6/zcode-daily&type=Date&theme=light" />
+  </picture>
+</a>
 
 ---
 
 <div align="center">
-  <sub>🎁 如果这个脚本帮到你，点个 <b>Star</b> 支持一下，或者到 <a href="#-支持与投喂">支持与投喂</a> 请我喝杯咖啡 ✨</sub>
+  <sub>L0NE-6 · DAILY SIGNAL</sub>
+  <br />
+  <a href="https://github.com/L0NE-6/ZCode-Daily/releases">Releases</a>
+  ·
+  <a href="https://github.com/L0NE-6/ZCode-Daily/issues">Issues</a>
+  ·
+  <a href="https://github.com/L0NE-6/ZCode-Daily">Star</a>
 </div>
