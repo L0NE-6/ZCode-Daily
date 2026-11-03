@@ -28,6 +28,7 @@
        jwt|device_mid|captcha_param
        备注|jwt|device_mid|captcha_param
      device_mid 留空会自动生成固定 UUID 存到 zcode_cn_devices.json
+     已确认领取记录存到 zcode_cn_claim_ledger.json，仅保留 90 天
    ZCODE_PLAN_ID       【可选】强制领取指定 plan_id
 ZCODE_APP_VERSION   【可选】客户端版本，默认 3.16.2
    ZCODE_CAPTCHA_PARAM 【可选】全局验证码参数（会覆盖未填写 captcha 的账号）
@@ -69,6 +70,10 @@ EVENT_REPORT_PATH = "/api/v1/event/report"
 CLAIM_PATH = "/api/v1/zcode-plan/billing/claim"
 DEFAULT_APP_VERSION = "3.16.2"
 DEVICE_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zcode_cn_devices.json")
+REGION = "cn"
+CLAIM_LEDGER_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zcode_cn_claim_ledger.json")
+CLAIM_LEDGER_VERSION = 1
+CLAIM_LEDGER_RETENTION_SECONDS = 90 * 24 * 60 * 60
 
 # 展示时间固定按北京时间（UTC+8）：中国标准时间无夏令时，固定偏移即可，
 # 不依赖宿主机时区（青龙 / NAS / 海外 VPS 上口径一致）。
@@ -175,6 +180,220 @@ def save_device_store(store):
             json.dump(store, handle, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+def _epoch_seconds(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if number > 0 else None
+
+
+def _safe_identifier(value, limit=256):
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if not value or len(value) > limit or any(ord(char) < 32 for char in value):
+        return ""
+    return value
+
+
+def stable_account_hash(account):
+    user_id = str(account.get("user_id") or "").strip()
+    if user_id:
+        subject = "user:" + user_id
+    else:
+        token_hash = hashlib.sha256(str(account.get("jwt") or "").encode("utf-8")).hexdigest()
+        subject = "token:" + token_hash
+    return hashlib.sha256(("%s:%s" % (REGION, subject)).encode("utf-8")).hexdigest()
+
+
+def empty_claim_ledger():
+    return {"version": CLAIM_LEDGER_VERSION, "claims": []}
+
+
+def _same_beijing_day(timestamp, now):
+    try:
+        claimed = datetime.fromtimestamp(int(timestamp), BEIJING_TZ)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return False
+    return claimed.date() == now.astimezone(BEIJING_TZ).date()
+
+
+def _normalize_claim_ledger(raw, now):
+    if not isinstance(raw, dict) or raw.get("version") != CLAIM_LEDGER_VERSION:
+        return empty_claim_ledger()
+    raw_claims = raw.get("claims")
+    if not isinstance(raw_claims, list):
+        return empty_claim_ledger()
+
+    now_ts = int(now.timestamp())
+    cutoff = now_ts - CLAIM_LEDGER_RETENTION_SECONDS
+    claims = []
+    seen = set()
+    for item in raw_claims:
+        if not isinstance(item, dict):
+            continue
+        account_hash = _safe_identifier(item.get("account"), 64)
+        region = _safe_identifier(item.get("region"), 16)
+        plan_id = _safe_identifier(item.get("plan_id"))
+        claimed_at = _epoch_seconds(item.get("claimed_at"))
+        expiry = _epoch_seconds(item.get("expiry"))
+        if len(account_hash) != 64 or any(char not in "0123456789abcdef" for char in account_hash):
+            continue
+        if region != REGION or not plan_id or claimed_at is None or claimed_at < cutoff:
+            continue
+        if claimed_at > now_ts + 24 * 60 * 60:
+            continue
+        claim = {
+            "account": account_hash,
+            "region": REGION,
+            "plan_id": plan_id,
+            "claimed_at": claimed_at,
+            "expiry": expiry,
+        }
+        key = (account_hash, plan_id, claimed_at, expiry)
+        if key in seen:
+            continue
+        seen.add(key)
+        claims.append(claim)
+    claims.sort(key=lambda claim: claim["claimed_at"])
+    return {"version": CLAIM_LEDGER_VERSION, "claims": claims}
+
+
+def save_claim_ledger(ledger):
+    directory = os.path.dirname(os.path.abspath(CLAIM_LEDGER_STORE))
+    temp_path = "%s.%s.tmp" % (CLAIM_LEDGER_STORE, uuid.uuid4().hex)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(ledger, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(temp_path, CLAIM_LEDGER_STORE)
+        return True, ""
+    except Exception as error:
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+        return False, str(error)
+
+
+def load_claim_ledger():
+    try:
+        with open(CLAIM_LEDGER_STORE, encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return empty_claim_ledger()
+    except Exception as error:
+        log("   ⚠️ 领取台账不可读，按服务端现状继续: %s" % error)
+        return empty_claim_ledger()
+
+    if not isinstance(raw, dict) or raw.get("version") != CLAIM_LEDGER_VERSION \
+            or not isinstance(raw.get("claims"), list):
+        log("   ⚠️ 领取台账格式或版本不支持，按服务端现状继续")
+        return empty_claim_ledger()
+    ledger = _normalize_claim_ledger(raw, beijing_now())
+    if ledger != raw:
+        saved, error = save_claim_ledger(ledger)
+        if not saved:
+            log("   ⚠️ 领取台账清理后保存失败: %s" % error)
+    return ledger
+
+
+def _claim_matches_plan(claim, plan, now):
+    if claim.get("plan_id") != plan.get("plan_id"):
+        return False
+    now_ts = int(now.timestamp())
+    claim_expiry = _epoch_seconds(claim.get("expiry"))
+    plan_expiry = _epoch_seconds(plan.get("ends_at"))
+    if claim_expiry is not None and claim_expiry <= now_ts:
+        return False
+    if plan_expiry is not None:
+        if claim_expiry is not None:
+            return claim_expiry == plan_expiry
+        return _same_beijing_day(claim.get("claimed_at"), now)
+    plan_start = _epoch_seconds(plan.get("starts_at"))
+    if plan_start is not None and claim_expiry is not None:
+        return claim_expiry > plan_start
+    return _same_beijing_day(claim.get("claimed_at"), now)
+
+
+def find_claimed_plan(ledger, account_hash, plan, now):
+    for claim in ledger.get("claims", []):
+        if claim.get("account") == account_hash and claim.get("region") == REGION \
+                and _claim_matches_plan(claim, plan, now):
+            return claim
+    return None
+
+
+def latest_account_claim(ledger, account_hash, now, plan_id=""):
+    candidates = [
+        claim for claim in ledger.get("claims", [])
+        if claim.get("account") == account_hash and claim.get("region") == REGION
+        and (not plan_id or claim.get("plan_id") == plan_id)
+    ]
+    same_day = [claim for claim in candidates if _same_beijing_day(claim.get("claimed_at"), now)]
+    if same_day:
+        return max(same_day, key=lambda claim: claim["claimed_at"])
+    now_ts = int(now.timestamp())
+    active = [
+        claim for claim in candidates
+        if _epoch_seconds(claim.get("expiry")) is not None
+        and _epoch_seconds(claim.get("expiry")) > now_ts
+    ]
+    if active:
+        return max(active, key=lambda claim: claim["claimed_at"])
+    return None
+
+
+def claim_status_message(claim, now):
+    plan_id = claim.get("plan_id")
+    expiry = _epoch_seconds(claim.get("expiry"))
+    if _same_beijing_day(claim.get("claimed_at"), now):
+        message = "今日已领取: %s" % plan_id
+    else:
+        message = "当前无新套餐；最近已领取: %s" % plan_id
+    if expiry:
+        message += "（有效期至 %s）" % format_time(expiry)
+    return message
+
+
+def record_confirmed_claim(ledger, account_hash, plan, result, now):
+    expiry = _epoch_seconds(result.get("ends_at", result.get("endsAt"))) \
+        or _epoch_seconds(plan.get("ends_at"))
+    claim = {
+        "account": account_hash,
+        "region": REGION,
+        "plan_id": plan["plan_id"],
+        "claimed_at": int(now.timestamp()),
+        "expiry": expiry,
+    }
+    claims = []
+    for existing in ledger.get("claims", []):
+        same_period = (
+            existing.get("account") == account_hash
+            and existing.get("region") == REGION
+            and existing.get("plan_id") == claim["plan_id"]
+            and (
+                _epoch_seconds(existing.get("expiry")) == expiry
+                or (
+                    _epoch_seconds(existing.get("expiry")) is None
+                    and expiry is None
+                    and _same_beijing_day(existing.get("claimed_at"), now)
+                )
+            )
+        )
+        if not same_period:
+            claims.append(existing)
+    claims.append(claim)
+    ledger["claims"] = claims
+    ledger = _normalize_claim_ledger(ledger, now)
+    return save_claim_ledger(ledger)
 
 
 def stable_device_mid(jwt, provided, note):
@@ -381,6 +600,9 @@ def describe_plan(plan):
 
 
 def do_claim(account):
+    now = beijing_now()
+    ledger = load_claim_ledger()
+    account_hash = stable_account_hash(account)
     activation_ok, activation_note = report_activation(account.get("user_id", ""), account["device_mid"])
     if activation_ok:
         log("   📣 已补报激活事件（app_launch / app_daily_active）")
@@ -396,12 +618,36 @@ def do_claim(account):
         message = first_text(payload.get("msg"), payload.get("message")) or ("HTTP %s" % preview_response.status_code)
         return False, "套餐探测失败: %s" % message
 
+    now = beijing_now()
     plans = parse_plans(payload)
     if not plans:
-        return False, "现在没有可领取的套餐"
-    plan = pick_plan(plans)
-    if plan is None:
+        wanted = os.environ.get("ZCODE_PLAN_ID", "").strip()
+        ledger_claim = latest_account_claim(ledger, account_hash, now, wanted)
+        if ledger_claim is None and wanted:
+            ledger_claim = latest_account_claim(ledger, account_hash, now)
+        if ledger_claim is not None:
+            log("   📒 服务端预览为空，本地台账确认已有领取记录")
+            return True, claim_status_message(ledger_claim, now)
+        return False, "当前无新套餐（服务端预览为空，本地台账无命中）"
+
+    target = pick_plan(plans)
+    if target is None:
         return False, "指定的 ZCODE_PLAN_ID 不在可领列表里"
+    wanted = os.environ.get("ZCODE_PLAN_ID", "").strip()
+    target_claim = find_claimed_plan(ledger, account_hash, target, now)
+    if wanted and target_claim is not None:
+        log("   📒 本地台账确认该活动期已领取，跳过重复请求")
+        return True, claim_status_message(target_claim, now)
+
+    if target_claim is None:
+        plan = target
+    else:
+        available = [candidate for candidate in plans
+                     if find_claimed_plan(ledger, account_hash, candidate, now) is None]
+        plan = pick_plan(available)
+        if plan is None:
+            log("   📒 服务端预览中的活动期均已在本地台账确认")
+            return True, claim_status_message(target_claim, now)
 
     log("   🎯 目标套餐: %s" % describe_plan(plan))
     if PREVIEW_ONLY:
@@ -415,11 +661,16 @@ def do_claim(account):
         result = body["data"]["plan"]
         starts = result.get("starts_at", result.get("startsAt"))
         ends = result.get("ends_at", result.get("endsAt"))
-        return True, "领取成功: %s（%s ~ %s）" % (plan["name"], format_time(starts), format_time(ends))
+        saved, save_error = record_confirmed_claim(ledger, account_hash, plan, result, beijing_now())
+        suffix = "" if saved else "；本地领取台账保存失败: %s" % save_error
+        return True, "领取成功: %s（%s ~ %s）%s" % (
+            plan["name"], format_time(starts), format_time(ends), suffix)
 
     label = FAILURE_LABELS.get(code)
     if code == 1003:
-        return True, "该账号已领取过这一期"
+        saved, save_error = record_confirmed_claim(ledger, account_hash, plan, {}, beijing_now())
+        suffix = "" if saved else "；本地领取台账保存失败: %s" % save_error
+        return True, "该账号已领取过这一期%s" % suffix
     if label is None:
         label = first_text(body.get("msg"), body.get("message")) or ("HTTP %s" % response.status_code)
     if code == 1005:

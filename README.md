@@ -65,6 +65,7 @@
 - 🧭 **默认客户端版本更新**：当前默认 `app_version=3.16.2`，低于活动门槛时不会继续使用旧版本空跑。
 - 📣 **激活事件补报**：领取前上报 `app_launch` / `app_daily_active`，失败只记日志，不阻断领取。
 - 🧾 **状态语义完整**：`1003` 已领取按成功，`1005` 显示服务端结束时间，`3001` / `3007` 分别提示设备与验证码问题。
+- 📒 **领取台账去重**：按账号与活动期合并服务端预览和已确认领取事实，保留 90 天；身份变化时隔离旧记录。
 - 🕐 **固定北京时间**：日志与套餐时间统一按 UTC+8 展示，不跟随宿主机时区。
 
 <a id="claim-flow"></a>
@@ -79,12 +80,15 @@ POST /api/v1/zcode-plan/billing/claim
 ```
 
 1. 按账号 JWT 载荷提取用户标识，补报两条激活事件。
-2. 读取可领套餐；指定 `ZCODE_PLAN_ID` 时优先匹配该套餐。
-3. 未指定时选择 `priority` 最高的套餐。
-4. 发起领取并解析套餐对象、开始时间与结束时间。
-5. `--preview` 只预览目标套餐，不发送领取请求。
+2. 读取可领套餐并合并本地领取台账；指定 `ZCODE_PLAN_ID` 时优先匹配该套餐。
+3. 已确认同一活动期的记录会跳过重复请求；存在新套餐时继续处理。
+4. 未指定时选择可领取且未在台账命中的最高 `priority` 套餐。
+5. 发起领取并解析套餐对象、开始时间与结束时间。
+6. `--preview` 只预览目标套餐，不发送领取请求。
 
 > 验证码参数不会自动求解。若上游返回 `3007`，请从浏览器抓取一次 `claim` 请求中的 `X-Aliyun-Captcha-Verify-Param`，填入账号行或 `ZCODE_CAPTCHA_PARAM`。
+>
+> 台账只记录服务端已经确认的领取结果。文件缺失、损坏或账号身份变化时，不会把旧记录当作新的领取成功。
 
 ## 📦 文件说明
 
@@ -127,6 +131,8 @@ POST /api/v1/zcode-plan/billing/claim
 | `WECOM_WEBHOOK` / `DINGTALK_WEBHOOK` / `DINGTALK_SECRET` | 可选 | 企业微信 / 钉钉 |
 
 > 仓库现有 Actions 工作流直接映射账号与推送 Secrets。`ZCODE_PLAN_ID`、`ZCODE_APP_VERSION`、`ZCODE_CAPTCHA_PARAM`、`ZCODE_ACTIVATION` 可在青龙或本地环境变量中设置；如要在 Actions 使用，需要同步把变量映射进 workflow。
+>
+> GitHub Actions runner 没有持久化目录时，领取台账只在当前 job 的 checkout 内有效，不保证跨 job 保留；依赖跨运行去重时，应使用带持久化脚本目录的青龙部署或自行提供持久化存储。
 
 <a id="credentials"></a>
 
@@ -183,7 +189,8 @@ python zcode_login.py --no-verify
 - `1005`：本轮名额或次数已用完；若服务端返回套餐结束时间，会给出下一轮重试不早于该时间。
 - `3001`：重点检查 `device_mid`、客户端版本与验证码是否过期。
 - `3007`：验证码未通过；补充 `X-Aliyun-Captcha-Verify-Param`。
-- 无套餐可能是活动未开始、已结束或账号无资格，脚本如实报告。
+- 台账命中表示本机记录过已确认领取，可能中性显示“今日已领取”或“当前无新套餐”，不等同于本轮重新领取成功。
+- 无套餐且台账无命中时，可能是活动未开始、已结束或账号无资格，脚本按服务端现状报告，不推测成功。
 
 ```text
 [08:25:01] 👤 [1] 主号  jwt=eyJhbGci****abcd  mid=1111...
@@ -199,10 +206,14 @@ python zcode_login.py --no-verify
 | :--- | :--- | :---: |
 | `zcode_cn_devices.json` | 国内版账号的固定 `device_mid` | 否，已忽略 |
 | `zcode_intl_devices.json` | 国际版账号的固定 `device_mid` | 否，已忽略 |
+| `zcode_cn_claim_ledger.json` | 国内版账号领取台账：账号稳定哈希、region、plan_id、claimed_at、expiry | 否，已忽略 |
+| `zcode_intl_claim_ledger.json` | 国际版账号领取台账：账号稳定哈希、region、plan_id、claimed_at、expiry | 否，已忽略 |
 
 - 仓库不内置账号、手机号、JWT 或设备标识。
 - 凭据由环境变量或 GitHub Secrets 注入。
 - 设备文件按 JWT 的哈希索引保存；JWT 本身不应出现在 Issue。
+- 领取台账只保存账号稳定哈希、region、plan_id、claimed_at、expiry，不保存 JWT、user_id 或验证码。
+- 国内版与国际版使用不同台账文件，不共享领取状态。
 - 当前用户标识从 JWT 载荷读取；读取失败时跳过激活补报，不伪造身份。
 
 ## ❓ 常见问题
@@ -214,7 +225,7 @@ python zcode_login.py --no-verify
 不能。bigmodel 与 z.ai 是不同账号体系，请分别登录并填写对应变量。
 
 **为什么套餐列表为空？**
-活动可能未开始或已结束、账号无资格，或客户端版本低于门槛。当前默认版本为 `3.16.2`，必要时用 `ZCODE_APP_VERSION` 覆盖。
+活动可能未开始或已结束、账号无资格，或客户端版本低于门槛。当前默认版本为 `3.16.2`，必要时用 `ZCODE_APP_VERSION` 覆盖。v1.0.6 起会合并本地领取台账：服务端预览为空但台账有当日已确认记录时，会中性提示“今日已领取”；没有台账命中时仍按服务端为空报告。
 
 **`1003` 是失败吗？**
 不是。它表示本期已经领取过，脚本按成功状态报告。
@@ -223,7 +234,7 @@ python zcode_login.py --no-verify
 
 ## 📦 版本与发布
 
-当前 CHANGELOG 记录最新版本为 `v1.0.5`（2026-10-31）。每个版本单独发布 Release，附完整包、脚本单文件与 `SHA256SUMS.txt`。下载页：[Releases](https://github.com/L0NE-6/ZCode-Daily/releases)。
+当前 CHANGELOG 记录最新版本为 `v1.0.6`（2026-11-04）。每个版本单独发布 Release，附完整包、脚本单文件与 `SHA256SUMS.txt`。下载页：[Releases](https://github.com/L0NE-6/ZCode-Daily/releases)。
 
 ## ⚠️ 说明
 

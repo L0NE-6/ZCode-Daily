@@ -3,3 +3,5 @@ __pycache__/
 *_result.json
 zcode_cn_devices.json
 zcode_intl_devices.json
+zcode_cn_claim_ledger.json
+zcode_intl_claim_ledger.json
