@@ -87,9 +87,14 @@ def run_claim(module, account_data, preview_payload, claim_payload=None):
         claim_calls.append((args, kwargs))
         return FakeResponse(claim_payload or claim_success())
 
-    with mock.patch.dict(module.os.environ, {"ZCODE_PLAN_ID": ""}), \
+    with mock.patch.dict(module.os.environ, {"ZCODE_PLAN_ID": "", "ZCODE_MARKETING_RECHECK": "0"}), \
             mock.patch.object(module, "report_activation", return_value=(False, "test")), \
             mock.patch.object(module, "preview", return_value=FakeResponse(preview_payload)), \
+            mock.patch.object(
+                module,
+                "query_marketing_plans",
+                return_value=module._source_result(True, plans=[]),
+            ), \
             mock.patch.object(module, "claim", side_effect=fake_claim):
         result = module.do_claim(account_data)
     return result, claim_calls
@@ -179,23 +184,35 @@ class ClaimLedgerTests(unittest.TestCase):
                 self.assertIn("本地台账无命中", changed[1])
                 self.assertEqual(calls, [])
 
-    def test_new_activity_period_for_same_plan_can_claim(self):
+    def test_expired_previous_period_same_plan_does_not_match(self):
         for module in (CN, INTL):
-            with self.subTest(region=module.REGION), self.patch_ledger(module):
-                now = int(time.time())
-                first_payload = plan_payload(ends_at=now + 3600)
-                first, _ = run_claim(module, account(), first_payload)
-                self.assertTrue(first[0], first)
-
-                next_payload = plan_payload(ends_at=now + 7200)
-                second, calls = run_claim(
-                    module,
-                    account(jwt="next-period-jwt"),
-                    next_payload,
-                    claim_success(ends_at=now + 7200),
+            with self.subTest(region=module.REGION):
+                now = module.beijing_now()
+                now_ts = int(now.timestamp())
+                account_hash = module.stable_account_hash(account())
+                ledger = {
+                    "version": module.CLAIM_LEDGER_VERSION,
+                    "claims": [
+                        {
+                            "account": account_hash,
+                            "region": module.REGION,
+                            "plan_id": "daily-plan",
+                            "claimed_at": now_ts - 2 * 24 * 60 * 60,
+                            "expiry": now_ts - 24 * 60 * 60,
+                        }
+                    ],
+                }
+                plan = module._normalize_plan(
+                    {
+                        "plan_id": "daily-plan",
+                        "starts_at": now_ts - 60,
+                        "ends_at": now_ts + 3600,
+                    },
+                    "billing",
                 )
-                self.assertTrue(second[0], second)
-                self.assertEqual(len(calls), 1)
+                self.assertIsNone(
+                    module.find_claimed_plan(ledger, account_hash, plan, now)
+                )
 
     def test_unclaimed_plan_after_higher_priority_claim_is_claimed(self):
         for module in (CN, INTL):

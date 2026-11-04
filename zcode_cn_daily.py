@@ -6,8 +6,9 @@
 📌 功能
    ZCode 限时套餐领取（不是传统签到）：
    1. GET  {zcode}/api/v1/zcode-plan/billing/preview?app_version=&platform=
-   2. 按 priority 选可领套餐（同优先取最先出现的）
-   3. POST {zcode}/api/v1/zcode-plan/billing/claim  body {"plan_id": "..."}
+   2. GET  {zcode}/api/v1/marketing/touch?seq=0
+   3. 合并两个来源，按 priority 选可领套餐（同优先取最先出现的）
+   4. POST {zcode}/api/v1/zcode-plan/billing/claim  body {"plan_id": "..."}
 
 ℹ️ 区域：本脚本用于**国内版**账号（bigmodel 侧签发的 JWT）；
    国际版账号请用 zcode_intl_daily.py，两边 JWT 不通用。
@@ -30,7 +31,8 @@
      device_mid 留空会自动生成固定 UUID 存到 zcode_cn_devices.json
      已确认领取记录存到 zcode_cn_claim_ledger.json，仅保留 90 天
    ZCODE_PLAN_ID       【可选】强制领取指定 plan_id
-ZCODE_APP_VERSION   【可选】客户端版本，默认 3.16.2
+   ZCODE_APP_VERSION   【可选】客户端版本，默认 3.18.0；marketing/touch 需要 3.17.1+
+   ZCODE_MARKETING_RECHECK 【可选】领取后复查营销活动位，默认 1
    ZCODE_CAPTCHA_PARAM 【可选】全局验证码参数（会覆盖未填写 captcha 的账号）
 
    推送通道（均可选）：PUSHPLUS_TOKEN / BARK_URL / WECOM_WEBHOOK / DINGTALK_WEBHOOK / DINGTALK_SECRET
@@ -68,7 +70,14 @@ ORIGIN = "https://zcode.z.ai"
 PREVIEW_PATH = "/api/v1/zcode-plan/billing/preview"
 EVENT_REPORT_PATH = "/api/v1/event/report"
 CLAIM_PATH = "/api/v1/zcode-plan/billing/claim"
-DEFAULT_APP_VERSION = "3.16.2"
+MARKETING_QUERY_PATH = "/api/v1/marketing/touch"
+MARKETING_ACTION_PATH = "/api/v1/marketing/touch/action"
+DEFAULT_APP_VERSION = "3.18.0"
+MARKETING_MIN_APP_VERSION = "3.17.1"
+MARKETING_MAX_DEPTH = 12
+MARKETING_MAX_NODES = 4096
+MARKETING_MAX_DELIVERIES = 32
+MARKETING_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 DEVICE_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zcode_cn_devices.json")
 REGION = "cn"
 CLAIM_LEDGER_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zcode_cn_claim_ledger.json")
@@ -310,16 +319,19 @@ def _claim_matches_plan(claim, plan, now):
         return False
     now_ts = int(now.timestamp())
     claim_expiry = _epoch_seconds(claim.get("expiry"))
+    claimed_at = _epoch_seconds(claim.get("claimed_at"))
     plan_expiry = _epoch_seconds(plan.get("ends_at"))
+    plan_start = _epoch_seconds(plan.get("starts_at"))
     if claim_expiry is not None and claim_expiry <= now_ts:
         return False
-    if plan_expiry is not None:
-        if claim_expiry is not None:
-            return claim_expiry == plan_expiry
-        return _same_beijing_day(claim.get("claimed_at"), now)
-    plan_start = _epoch_seconds(plan.get("starts_at"))
-    if plan_start is not None and claim_expiry is not None:
-        return claim_expiry > plan_start
+    if claim_expiry is not None and plan_start is not None:
+        if plan_start >= claim_expiry:
+            return False
+        if plan_expiry is not None and claimed_at is not None and plan_expiry <= claimed_at:
+            return False
+        return True
+    if claim_expiry is not None and plan_expiry is not None and claim_expiry == plan_expiry:
+        return True
     return _same_beijing_day(claim.get("claimed_at"), now)
 
 
@@ -364,8 +376,8 @@ def claim_status_message(claim, now):
 
 
 def record_confirmed_claim(ledger, account_hash, plan, result, now):
-    expiry = _epoch_seconds(result.get("ends_at", result.get("endsAt"))) \
-        or _epoch_seconds(plan.get("ends_at"))
+    expiry = _epoch_seconds(plan.get("ends_at")) \
+        or _epoch_seconds(result.get("ends_at", result.get("endsAt")))
     claim = {
         "account": account_hash,
         "region": REGION,
@@ -528,39 +540,445 @@ def claim(jwt, plan_id, device_mid, captcha):
     return request("POST", ORIGIN + CLAIM_PATH, headers=headers, body={"plan_id": plan_id})
 
 
+def _int_value(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _version_tuple(value):
+    text = str(value or "").strip().lower().lstrip("v").split("-", 1)[0]
+    if not text:
+        return None
+    parts = text.split(".")
+    numbers = []
+    for part in parts[:3]:
+        try:
+            numbers.append(int(part))
+        except (TypeError, ValueError):
+            return None
+    while len(numbers) < 3:
+        numbers.append(0)
+    return tuple(numbers)
+
+
+def _version_at_least(value, minimum):
+    current = _version_tuple(value)
+    required = _version_tuple(minimum)
+    if current is None or required is None:
+        return False
+    return current >= required
+
+
+def _marketing_headers(jwt, device_mid):
+    headers = {
+        "X-Client-Language": "zh-CN",
+        "X-ZCode-App-Version": app_version(),
+    }
+    if jwt:
+        headers["Authorization"] = "Bearer %s" % jwt
+    if device_mid:
+        headers["X-Device-Mid"] = device_mid
+    return headers
+
+
+def _response_too_large(response):
+    content = getattr(response, "content", None)
+    return isinstance(content, (bytes, bytearray)) and len(content) > MARKETING_MAX_RESPONSE_BYTES
+
+
+def _source_result(ok, plans=None, error="", skipped=False, deployed=True, delivery_count=None):
+    return {
+        "ok": bool(ok),
+        "plans": plans or [],
+        "error": error,
+        "skipped": bool(skipped),
+        "deployed": bool(deployed),
+        "delivery_count": delivery_count,
+    }
+
+
+def _payload_code(payload):
+    return _int_value(payload.get("code")) if isinstance(payload, dict) else None
+
+
+def _payload_error(payload, status_code):
+    if isinstance(payload, dict):
+        return first_text(payload.get("msg"), payload.get("message")) or ("HTTP %s" % status_code)
+    return "HTTP %s" % status_code
+
+
+def _parse_entitlements(raw):
+    entitlements = []
+    if not isinstance(raw, list):
+        return entitlements
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        show_name = first_text(entry.get("show_name"), entry.get("showName"), entry.get("name"))
+        if not show_name:
+            continue
+        entitlements.append({
+            "name": show_name,
+            "unit": first_text(entry.get("unit_type"), entry.get("unitType"), entry.get("unit")),
+            "grant": entry.get("grant_units", entry.get("grantUnits", entry.get("grant", 0))),
+            "period": first_text(entry.get("period")),
+        })
+    return entitlements
+
+
+def _normalize_plan(raw, source, default_priority=0, campaign_ids=None):
+    if not isinstance(raw, dict):
+        return None
+    plan_id = _safe_identifier(first_text(raw.get("plan_id"), raw.get("planId")))
+    if not plan_id:
+        return None
+    priority = _int_value(raw.get("priority"))
+    if priority is None:
+        priority = default_priority
+    campaigns = []
+    for campaign in campaign_ids or []:
+        campaign = _safe_identifier(campaign)
+        if campaign and campaign not in campaigns:
+            campaigns.append(campaign)
+    return {
+        "plan_id": plan_id,
+        "name": first_text(raw.get("name")) or plan_id,
+        "description": first_text(raw.get("description")),
+        "priority": priority,
+        "starts_at": _epoch_seconds(raw.get("starts_at", raw.get("startsAt"))),
+        "ends_at": _epoch_seconds(raw.get("ends_at", raw.get("endsAt"))),
+        "entitlements": _parse_entitlements(raw.get("entitlements")),
+        "sources": [source],
+        "campaign_ids": campaigns,
+    }
+
+
 def parse_plans(payload):
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     raw = data.get("plans")
     plans = []
     if isinstance(raw, list):
         for item in raw:
-            if not isinstance(item, dict):
+            plan = _normalize_plan(item, "billing")
+            if plan is not None:
+                plans.append(plan)
+    return plans
+
+
+def _merge_plan_into(existing, incoming):
+    if not existing.get("name") or existing.get("name") == existing.get("plan_id"):
+        existing["name"] = incoming.get("name") or existing.get("name")
+    if not existing.get("description"):
+        existing["description"] = incoming.get("description", "")
+    existing["priority"] = max(existing.get("priority", 0), incoming.get("priority", 0))
+    if existing.get("starts_at") is None and incoming.get("starts_at") is not None:
+        existing["starts_at"] = incoming["starts_at"]
+    if existing.get("ends_at") is None and incoming.get("ends_at") is not None:
+        existing["ends_at"] = incoming["ends_at"]
+    if not existing.get("entitlements") and incoming.get("entitlements"):
+        existing["entitlements"] = [dict(entry) for entry in incoming["entitlements"]]
+    for source in incoming.get("sources", []):
+        if source not in existing["sources"]:
+            existing["sources"].append(source)
+    for campaign in incoming.get("campaign_ids", []):
+        if campaign not in existing["campaign_ids"]:
+            existing["campaign_ids"].append(campaign)
+
+
+def merge_plan_sources(*groups):
+    plans = []
+    by_id = {}
+    for group in groups:
+        for raw in group or []:
+            if not isinstance(raw, dict):
                 continue
-            plan_id = first_text(item.get("plan_id"), item.get("planId"))
+            plan_id = _safe_identifier(raw.get("plan_id"))
             if not plan_id:
                 continue
-            entitlements = []
-            for entry in item.get("entitlements") or []:
-                if not isinstance(entry, dict):
-                    continue
-                show_name = first_text(entry.get("show_name"), entry.get("showName"))
-                if show_name:
-                    entitlements.append({
-                        "name": show_name,
-                        "unit": first_text(entry.get("unit_type"), entry.get("unitType")),
-                        "grant": entry.get("grant_units", entry.get("grantUnits", 0)),
-                        "period": first_text(entry.get("period")),
-                    })
-            plans.append({
+            incoming = {
                 "plan_id": plan_id,
-                "name": first_text(item.get("name")) or plan_id,
-                "description": first_text(item.get("description")),
-                "priority": int(item.get("priority") or 0),
-                "starts_at": item.get("starts_at", item.get("startsAt")),
-                "ends_at": item.get("ends_at", item.get("endsAt")),
-                "entitlements": entitlements,
-            })
+                "name": first_text(raw.get("name")) or plan_id,
+                "description": first_text(raw.get("description")),
+                "priority": _int_value(raw.get("priority")) or 0,
+                "starts_at": _epoch_seconds(raw.get("starts_at")),
+                "ends_at": _epoch_seconds(raw.get("ends_at")),
+                "entitlements": _parse_entitlements(raw.get("entitlements")),
+                "sources": list(raw.get("sources") or []),
+                "campaign_ids": list(raw.get("campaign_ids") or []),
+            }
+            existing = by_id.get(plan_id)
+            if existing is None:
+                existing = incoming
+                by_id[plan_id] = existing
+                plans.append(existing)
+            else:
+                _merge_plan_into(existing, incoming)
     return plans
+
+
+def _marketing_plan_metadata(raw, default_priority):
+    plan = _normalize_plan(raw, "marketing", default_priority)
+    if plan is None:
+        plan = _normalize_plan(raw.get("zcode_plan") if isinstance(raw, dict) else None,
+                               "marketing", default_priority)
+    return plan
+
+
+def _walk_marketing_delivery(delivery):
+    metadata = {}
+    action_plan_ids = []
+    seen = set()
+    budget = [MARKETING_MAX_NODES]
+    delivery_priority = _int_value(delivery.get("priority")) or 0
+
+    def remember_plan(plan):
+        if plan is None:
+            return
+        existing = metadata.get(plan["plan_id"])
+        if existing is None:
+            metadata[plan["plan_id"]] = plan
+        else:
+            _merge_plan_into(existing, plan)
+
+    def walk(node, depth):
+        if depth > MARKETING_MAX_DEPTH or budget[0] <= 0:
+            return
+        if isinstance(node, (dict, list)):
+            marker = id(node)
+            if marker in seen:
+                return
+            seen.add(marker)
+        budget[0] -= 1
+        if isinstance(node, dict):
+            remember_plan(_marketing_plan_metadata(node, delivery_priority))
+            nested = node.get("zcode_plan")
+            if isinstance(nested, dict):
+                remember_plan(_normalize_plan(nested, "marketing", delivery_priority))
+            action = node.get("action")
+            if isinstance(action, dict) and action.get("type") == "claim_zcode_plan":
+                args = action.get("args")
+                plan_id = _safe_identifier(args.get("plan_id")) if isinstance(args, dict) else ""
+                if plan_id and plan_id not in action_plan_ids:
+                    action_plan_ids.append(plan_id)
+            for value in node.values():
+                walk(value, depth + 1)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value, depth + 1)
+
+    walk(delivery, 0)
+    campaign_id = _safe_identifier(delivery.get("campaign_id"))
+    found = []
+    for plan_id in action_plan_ids:
+        plan = metadata.get(plan_id)
+        if plan is None:
+            plan = {
+                "plan_id": plan_id,
+                "name": plan_id,
+                "description": "",
+                "priority": delivery_priority,
+                "starts_at": None,
+                "ends_at": None,
+                "entitlements": [],
+                "sources": ["marketing"],
+                "campaign_ids": [],
+            }
+        else:
+            plan = dict(plan)
+            plan["entitlements"] = [dict(entry) for entry in plan.get("entitlements", [])]
+            plan["sources"] = list(plan.get("sources", []))
+            plan["campaign_ids"] = list(plan.get("campaign_ids", []))
+        if campaign_id and campaign_id not in plan["campaign_ids"]:
+            plan["campaign_ids"].append(campaign_id)
+        found.append(plan)
+    return found
+
+
+def parse_marketing_plans(payload):
+    data = payload.get("data") if isinstance(payload, dict) else None
+    deliveries = data.get("deliveries") if isinstance(data, dict) else None
+    if not isinstance(deliveries, list):
+        return [], "营销套餐查询失败：上游未返回有效活动列表"
+    if len(deliveries) > MARKETING_MAX_DELIVERIES:
+        return [], "营销套餐查询失败：活动列表超过上限 %d" % MARKETING_MAX_DELIVERIES
+    plans = []
+    for delivery in deliveries:
+        if not isinstance(delivery, dict):
+            continue
+        plans.extend(_walk_marketing_delivery(delivery))
+    return merge_plan_sources(plans), ""
+
+
+def query_billing_plans(jwt, device_mid):
+    try:
+        response = preview(jwt, device_mid)
+    except Exception as error:
+        return _source_result(False, error="套餐预览请求失败: %s" % error)
+    if response.status_code == 404:
+        return _source_result(False, error="领取接口尚未部署（活动未上线）")
+    if response.status_code == 401:
+        return _source_result(False, error="登录状态失效，重新登录一下吧该账号")
+    if _response_too_large(response):
+        return _source_result(False, error="套餐预览查询失败：响应超过大小上限")
+    try:
+        payload = response.json()
+    except Exception:
+        return _source_result(False, error="套餐预览查询失败：上游响应不是 JSON")
+    if not isinstance(payload, dict):
+        return _source_result(False, error="套餐预览查询失败：上游响应格式异常")
+    code = _payload_code(payload)
+    if response.status_code != 200 or code not in (0, None):
+        return _source_result(False, error="套餐预览查询失败: %s" % _payload_error(payload, response.status_code))
+    return _source_result(True, plans=parse_plans(payload))
+
+
+def query_marketing_plans(jwt, device_mid):
+    version = app_version()
+    if not _version_at_least(version, MARKETING_MIN_APP_VERSION):
+        return _source_result(
+            False,
+            error="营销套餐查询跳过：ZCODE_APP_VERSION=%s 低于 marketing/touch 最低版本 %s"
+                  % (version, MARKETING_MIN_APP_VERSION),
+            skipped=True,
+        )
+    try:
+        response = request(
+            "GET",
+            ORIGIN + MARKETING_QUERY_PATH + "?seq=0",
+            headers=_marketing_headers(jwt, device_mid),
+            timeout=15,
+        )
+    except Exception as error:
+        return _source_result(False, error="营销套餐查询失败: %s" % error)
+    if response.status_code == 404:
+        return _source_result(True, plans=[], deployed=False)
+    if _response_too_large(response):
+        return _source_result(False, error="营销套餐查询失败：响应超过大小上限")
+    try:
+        payload = response.json()
+    except Exception:
+        return _source_result(False, error="营销套餐查询失败：上游响应不是 JSON")
+    if response.status_code != 200 or _payload_code(payload) != 0 \
+            or (isinstance(payload, dict) and payload.get("success") is False):
+        return _source_result(
+            False,
+            error="营销套餐查询失败: %s" % _payload_error(payload, response.status_code),
+        )
+    plans, error = parse_marketing_plans(payload)
+    if error:
+        return _source_result(False, error=error)
+    data = payload.get("data") if isinstance(payload, dict) else None
+    deliveries = data.get("deliveries") if isinstance(data, dict) else None
+    return _source_result(True, plans=plans, delivery_count=len(deliveries))
+
+
+def source_warning(*sources):
+    failures = []
+    skipped = []
+    for label, result in sources:
+        if result.get("ok"):
+            continue
+        item = "%s: %s" % (label, result.get("error") or "未知错误")
+        if result.get("skipped"):
+            skipped.append(item)
+        else:
+            failures.append(item)
+    parts = []
+    if failures:
+        parts.append("部分来源失败: %s" % "；".join(failures))
+    if skipped:
+        parts.append("来源未查询: %s" % "；".join(skipped))
+    return "；" + "；".join(parts) if parts else ""
+
+
+def confirm_marketing_claim(jwt, device_mid, plan):
+    campaign_ids = []
+    for campaign in plan.get("campaign_ids") or []:
+        campaign = _safe_identifier(campaign)
+        if campaign and campaign not in campaign_ids:
+            campaign_ids.append(campaign)
+    if not campaign_ids:
+        return None, ""
+    errors = []
+    confirmed = 0
+    for campaign_id in campaign_ids:
+        try:
+            response = request(
+                "POST",
+                ORIGIN + MARKETING_ACTION_PATH,
+                headers=_marketing_headers(jwt, device_mid),
+                body={"campaign_id": campaign_id, "action_type": "confirm"},
+                timeout=15,
+                retries=1,
+            )
+        except Exception as error:
+            errors.append("%s: %s" % (campaign_id, error))
+            continue
+        if _response_too_large(response):
+            errors.append("%s: 响应超过大小上限" % campaign_id)
+            continue
+        try:
+            payload = response.json()
+        except Exception:
+            errors.append("%s: 响应不是 JSON" % campaign_id)
+            continue
+        if 200 <= response.status_code < 300 and _payload_code(payload) == 0 \
+                and not (isinstance(payload, dict) and payload.get("success") is False):
+            confirmed += 1
+        else:
+            errors.append("%s: %s" % (campaign_id, _payload_error(payload, response.status_code)))
+    if errors:
+        if confirmed:
+            return False, "营销回执部分成功（%d/%d）: %s" % (
+                confirmed, len(campaign_ids), "；".join(errors))
+        return False, "营销回执失败: %s" % "；".join(errors)
+    return True, "营销回执已确认（%d 个 campaign）" % confirmed
+
+
+def recheck_marketing_claim(jwt, device_mid, plan):
+    if os.environ.get("ZCODE_MARKETING_RECHECK", "1").strip() == "0":
+        return ""
+    result = query_marketing_plans(jwt, device_mid)
+    if not result.get("ok"):
+        return "；营销复查询失败: %s" % result.get("error")
+    if not result.get("deployed", True):
+        return "；营销复查询接口未部署，不能作为活动位下线证据"
+    delivery_count = result.get("delivery_count")
+    if delivery_count == 0:
+        return "；营销活动位已下线（正向证据）"
+    remaining = any(item.get("plan_id") == plan.get("plan_id") for item in result.get("plans", []))
+    if remaining:
+        return "；营销活动位仍返回该套餐（不作为失败）"
+    if delivery_count is not None:
+        return "；营销活动位仍有 %d 条，但未匹配到该套餐（不作为下线证据）" % delivery_count
+    return "；营销复查询未返回 deliveries 数量，不能作为活动位下线证据"
+
+
+def finalize_marketing_claim(account, plan):
+    if PREVIEW_ONLY or not plan.get("campaign_ids"):
+        return ""
+    notes = []
+    confirmed, confirm_note = confirm_marketing_claim(account["jwt"], account["device_mid"], plan)
+    if confirmed is True:
+        notes.append(confirm_note)
+    elif confirmed is False:
+        notes.append(confirm_note + "（不影响已确认领取）")
+    recheck_note = recheck_marketing_claim(account["jwt"], account["device_mid"], plan)
+    if recheck_note:
+        notes.append(recheck_note.lstrip("；"))
+    return "；" + "；".join(notes) if notes else ""
+
+
+def _best_plan(plans):
+    best = None
+    for plan in plans:
+        if best is None or plan.get("priority", 0) > best.get("priority", 0):
+            best = plan
+    return best
 
 
 def pick_plan(plans):
@@ -575,6 +993,17 @@ def pick_plan(plans):
         if best is None or plan["priority"] > best["priority"]:
             best = plan
     return best
+
+
+def plan_window_state(plan, now):
+    now_ts = int(now.timestamp())
+    starts_at = _epoch_seconds(plan.get("starts_at"))
+    ends_at = _epoch_seconds(plan.get("ends_at"))
+    if starts_at is not None and now_ts < starts_at:
+        return "future"
+    if ends_at is not None and now_ts >= ends_at:
+        return "expired"
+    return "active"
 
 
 def format_time(seconds):
@@ -599,6 +1028,16 @@ def describe_plan(plan):
     return text
 
 
+def _plan_sources(plan):
+    sources = plan.get("sources") or []
+    return "/".join(sources) if sources else "unknown"
+
+
+def _finish_already_claimed(account, plan, claim_record, now, warning):
+    marketing_note = finalize_marketing_claim(account, plan)
+    return True, claim_status_message(claim_record, now) + marketing_note + warning
+
+
 def do_claim(account):
     now = beijing_now()
     ledger = load_claim_ledger()
@@ -608,81 +1047,112 @@ def do_claim(account):
         log("   📣 已补报激活事件（app_launch / app_daily_active）")
     else:
         log("   ℹ️ 激活事件未上报: %s" % activation_note)
-    preview_response = preview(account["jwt"], account["device_mid"])
-    if preview_response.status_code == 404:
-        return False, "领取接口尚未部署（活动未上线）"
-    if preview_response.status_code == 401:
-        return False, "登录状态失效，重新登录一下吧该账号"
-    payload = json_of(preview_response)
-    if preview_response.status_code != 200 or payload.get("code") not in (0, None):
-        message = first_text(payload.get("msg"), payload.get("message")) or ("HTTP %s" % preview_response.status_code)
-        return False, "套餐探测失败: %s" % message
-
+    billing = query_billing_plans(account["jwt"], account["device_mid"])
+    marketing = query_marketing_plans(account["jwt"], account["device_mid"])
     now = beijing_now()
-    plans = parse_plans(payload)
+    plans = merge_plan_sources(billing.get("plans", []), marketing.get("plans", []))
+    warning = source_warning(("billing", billing), ("marketing", marketing))
     if not plans:
         wanted = os.environ.get("ZCODE_PLAN_ID", "").strip()
         ledger_claim = latest_account_claim(ledger, account_hash, now, wanted)
         if ledger_claim is None and wanted:
             ledger_claim = latest_account_claim(ledger, account_hash, now)
         if ledger_claim is not None:
-            log("   📒 服务端预览为空，本地台账确认已有领取记录")
-            return True, claim_status_message(ledger_claim, now)
-        return False, "当前无新套餐（服务端预览为空，本地台账无命中）"
+            log("   📒 服务端两来源为空，本地台账确认已有领取记录")
+            return True, claim_status_message(ledger_claim, now) + warning
+        if warning:
+            return False, "套餐来源查询未完成且本地台账无命中%s" % warning
+        return False, "当前无新套餐（billing / marketing 均未返回可领套餐，本地台账无命中）"
 
     target = pick_plan(plans)
     if target is None:
+        wanted = os.environ.get("ZCODE_PLAN_ID", "").strip()
+        ledger_claim = latest_account_claim(ledger, account_hash, now, wanted)
+        if ledger_claim is not None:
+            return True, claim_status_message(ledger_claim, now) + warning
+        if warning:
+            return False, "指定套餐未在完整来源中确认%s" % warning
         return False, "指定的 ZCODE_PLAN_ID 不在可领列表里"
     wanted = os.environ.get("ZCODE_PLAN_ID", "").strip()
     target_claim = find_claimed_plan(ledger, account_hash, target, now)
     if wanted and target_claim is not None:
         log("   📒 本地台账确认该活动期已领取，跳过重复请求")
-        return True, claim_status_message(target_claim, now)
+        return _finish_already_claimed(account, target, target_claim, now, warning)
 
-    if target_claim is None:
-        plan = target
-    else:
-        available = [candidate for candidate in plans
-                     if find_claimed_plan(ledger, account_hash, candidate, now) is None]
-        plan = pick_plan(available)
-        if plan is None:
-            log("   📒 服务端预览中的活动期均已在本地台账确认")
-            return True, claim_status_message(target_claim, now)
+    candidates = [target] if wanted else plans
+    claimed_candidates = []
+    available = []
+    for candidate in candidates:
+        claim_record = find_claimed_plan(ledger, account_hash, candidate, now)
+        if claim_record is None:
+            available.append(candidate)
+        else:
+            claimed_candidates.append((candidate, claim_record))
+    if not available:
+        candidate, claim_record = claimed_candidates[0]
+        log("   📒 当前套餐活动期均已在本地台账确认")
+        return _finish_already_claimed(account, candidate, claim_record, now, warning)
 
-    log("   🎯 目标套餐: %s" % describe_plan(plan))
+    future = []
+    active = []
+    expired = []
+    for candidate in available:
+        state = plan_window_state(candidate, now)
+        if state == "future":
+            future.append(candidate)
+        elif state == "expired":
+            expired.append(candidate)
+        else:
+            active.append(candidate)
+    if not active:
+        if future:
+            plan = min(future, key=lambda item: item.get("starts_at") or 0)
+            message = "活动窗口未开启: %s（北京时间 %s 开启）" % (
+                plan["name"], format_time(plan.get("starts_at")))
+            return False, message + warning
+        plan = _best_plan(expired)
+        message = "活动已结束: %s（北京时间 %s 结束）" % (
+            plan["name"], format_time(plan.get("ends_at")))
+        return False, message + warning
+    plan = _best_plan(active)
+
+    log("   🎯 目标套餐: %s [来源: %s]" % (describe_plan(plan), _plan_sources(plan)))
     if PREVIEW_ONLY:
-        return False, "仅预览（--preview），未发起领取"
+        return False, "仅预览（--preview），未发起领取" + warning
 
-    response = claim(account["jwt"], plan["plan_id"], account["device_mid"], account["captcha"])
-    body = json_of(response)
-    code = body.get("code")
-    if response.status_code == 200 and code == 0 and isinstance(body.get("data"), dict) \
+    claim_response = claim(account["jwt"], plan["plan_id"], account["device_mid"], account["captcha"])
+    body = json_of(claim_response)
+    code = _payload_code(body)
+    if claim_response.status_code == 200 and code == 0 and isinstance(body.get("data"), dict) \
             and isinstance(body["data"].get("plan"), dict):
         result = body["data"]["plan"]
         starts = result.get("starts_at", result.get("startsAt"))
         ends = result.get("ends_at", result.get("endsAt"))
         saved, save_error = record_confirmed_claim(ledger, account_hash, plan, result, beijing_now())
         suffix = "" if saved else "；本地领取台账保存失败: %s" % save_error
-        return True, "领取成功: %s（%s ~ %s）%s" % (
-            plan["name"], format_time(starts), format_time(ends), suffix)
+        marketing_note = finalize_marketing_claim(account, plan)
+        return True, "领取成功: %s（%s ~ %s）%s%s%s" % (
+            plan["name"], format_time(starts), format_time(ends), suffix, marketing_note, warning)
 
     label = FAILURE_LABELS.get(code)
     if code == 1003:
         saved, save_error = record_confirmed_claim(ledger, account_hash, plan, {}, beijing_now())
         suffix = "" if saved else "；本地领取台账保存失败: %s" % save_error
-        return True, "该账号已领取过这一期%s" % suffix
+        marketing_note = finalize_marketing_claim(account, plan)
+        return True, "该账号已领取过这一期%s%s%s" % (suffix, marketing_note, warning)
     if label is None:
-        label = first_text(body.get("msg"), body.get("message")) or ("HTTP %s" % response.status_code)
+        label = first_text(body.get("msg"), body.get("message")) or ("HTTP %s" % claim_response.status_code)
     if code == 1005:
         plan = (body.get("data") or {}).get("plan") if isinstance(body.get("data"), dict) else {}
         ends = plan.get("ends_at", plan.get("endsAt")) if isinstance(plan, dict) else None
         if ends:
-            return False, "领取未成功: %s（下轮重试不早于 %s）" % (label, format_time(ends))
+            return False, "领取未成功: %s（下轮重试不早于 %s）%s" % (
+                label, format_time(ends), warning)
     if code == 3007 and not account["captcha"]:
         label += "；从浏览器抓一次 claim 请求，把该头填到账号行第 4 段或 ZCODE_CAPTCHA_PARAM"
     if code == 3001:
         label += "；检查 device_mid 与客户端版本；若带验证码，确认参数未过期"
-    return False, "领取未成功: %s（code=%s）" % (label, code)
+    return False, "领取未成功: %s（code=%s）%s" % (label, code, warning)
 
 
 # ---------- 推送 ----------

@@ -50,7 +50,7 @@
 | :--- | :--- |
 | **用途** | 预览并领取 ZCode 国内版或国际版当前可领取的限时套餐。 |
 | **输入** | `ZCODE_CN_TOKENS` / `ZCODE_INTL_TOKENS`；按需配置套餐 ID、客户端版本、验证码与激活上报。 |
-| **输出** | 目标套餐、领取结果、套餐有效期和服务端名额恢复时间。 |
+| **输出** | 双来源套餐、领取结果、套餐有效期、营销回执状态和服务端名额恢复时间。 |
 | **部署** | 青龙面板、GitHub Actions，或本地 Python 运行。 |
 | **依赖** | Python 3.8+，仅需 `requests`。 |
 | **成功判据** | HTTP 200 且业务 `code=0`，回执含套餐对象与有效期；`1003` 表示本期已领取，按成功状态处理。 |
@@ -59,10 +59,10 @@
 
 ## 🎯 核心能力
 
-- 🎁 **按优先级选套餐**：读取可领列表，使用 `priority` 选择最高优先级套餐，同优先级保留先出现者。
+- 🎁 **双来源按优先级选套餐**：独立读取 billing 与 marketing，按 `plan_id` 合并去重后使用 `priority` 选择，同优先级保留先出现者。
 - 🌍 **国内 / 国际分流**：两个脚本分别使用 bigmodel 与 z.ai 账号体系，Token 不通用。
 - 🔐 **网页授权登录**：命令行 OAuth 轮询，无需在脚本里输入验证码登录账号。
-- 🧭 **默认客户端版本更新**：当前默认 `app_version=3.16.2`，低于活动门槛时不会继续使用旧版本空跑。
+- 🧭 **默认客户端版本更新**：当前默认 `app_version=3.18.0`；marketing/touch 最低需要 `3.17.1`，仍可用 `ZCODE_APP_VERSION` 覆盖。
 - 📣 **激活事件补报**：领取前上报 `app_launch` / `app_daily_active`，失败只记日志，不阻断领取。
 - 🧾 **状态语义完整**：`1003` 已领取按成功，`1005` 显示服务端结束时间，`3001` / `3007` 分别提示设备与验证码问题。
 - 📒 **领取台账去重**：按账号与活动期合并服务端预览和已确认领取事实，保留 90 天；身份变化时隔离旧记录。
@@ -74,21 +74,26 @@
 
 ```text
 GET  /api/v1/zcode-plan/billing/preview?app_version=...&platform=...
+GET  /api/v1/marketing/touch?seq=0
 POST /api/v1/event/report          # app_launch / app_daily_active
 POST /api/v1/zcode-plan/billing/claim
 {"plan_id": "..."}
+POST /api/v1/marketing/touch/action
+{"campaign_id": "...", "action_type": "confirm"}
 ```
 
 1. 按账号 JWT 载荷提取用户标识，补报两条激活事件。
-2. 读取可领套餐并合并本地领取台账；指定 `ZCODE_PLAN_ID` 时优先匹配该套餐。
-3. 已确认同一活动期的记录会跳过重复请求；存在新套餐时继续处理。
-4. 未指定时选择可领取且未在台账命中的最高 `priority` 套餐。
-5. 发起领取并解析套餐对象、开始时间与结束时间。
-6. `--preview` 只预览目标套餐，不发送领取请求。
+2. 独立读取 billing 与 marketing；任一来源失败都不会跳过另一来源。
+3. 递归解析营销活动中的 `claim_zcode_plan` 按钮和嵌套 `zcode_plan` 元数据，将 `campaign_id` 关联到套餐。
+4. 两来源按 `plan_id` 合并，保留来源和 campaign，再合并本地领取台账。
+5. 使用上游 `starts_at` / `ends_at` 与固定北京时间判断窗口；未来活动等待开窗，已结束活动不领取。
+6. 指定 `ZCODE_PLAN_ID` 时优先匹配该套餐；否则选择可领取且未在台账命中的最高 `priority` 套餐。
+7. 发起领取；marketing 来源成功或返回 `1003` 后发送 confirm 回执。
+8. `--preview` 只预览目标套餐，不发送领取或 confirm 请求。
 
 > 验证码参数不会自动求解。若上游返回 `3007`，请从浏览器抓取一次 `claim` 请求中的 `X-Aliyun-Captcha-Verify-Param`，填入账号行或 `ZCODE_CAPTCHA_PARAM`。
 >
-> 台账只记录服务端已经确认的领取结果。文件缺失、损坏或账号身份变化时，不会把旧记录当作新的领取成功。
+> 台账只记录服务端已经确认的领取结果。文件缺失、损坏或账号身份变化时，不会把旧记录当作新的领取成功。confirm 失败会明确写入结果，但不会推翻已确认的 claim。
 
 ## 📦 文件说明
 
@@ -130,7 +135,7 @@ POST /api/v1/zcode-plan/billing/claim
 | `PUSHPLUS_TOKEN` / `BARK_URL` | 可选 | PushPlus / Bark |
 | `WECOM_WEBHOOK` / `DINGTALK_WEBHOOK` / `DINGTALK_SECRET` | 可选 | 企业微信 / 钉钉 |
 
-> 仓库现有 Actions 工作流直接映射账号与推送 Secrets。`ZCODE_PLAN_ID`、`ZCODE_APP_VERSION`、`ZCODE_CAPTCHA_PARAM`、`ZCODE_ACTIVATION` 可在青龙或本地环境变量中设置；如要在 Actions 使用，需要同步把变量映射进 workflow。
+> 仓库现有 Actions 工作流直接映射账号与推送 Secrets。`ZCODE_PLAN_ID`、`ZCODE_APP_VERSION`、`ZCODE_CAPTCHA_PARAM`、`ZCODE_ACTIVATION`、`ZCODE_MARKETING_RECHECK` 可在青龙或本地环境变量中设置；如要在 Actions 使用，需要同步把变量映射进 workflow。
 >
 > GitHub Actions runner 没有持久化目录时，领取台账只在当前 job 的 checkout 内有效，不保证跨 job 保留；依赖跨运行去重时，应使用带持久化脚本目录的青龙部署或自行提供持久化存储。
 
@@ -167,9 +172,10 @@ python zcode_login.py --no-verify
 | `ZCODE_CN_TOKENS` | `jwt\|device_mid` / `备注\|jwt\|device_mid` / `备注\|jwt\|device_mid\|captcha` | 国内版账号 |
 | `ZCODE_INTL_TOKENS` | 同上 | 国际版账号 |
 | `ZCODE_PLAN_ID` | 套餐 ID | 强制领取指定套餐 |
-| `ZCODE_APP_VERSION` | 版本号 | 覆盖默认客户端版本，默认 `3.16.2` |
+| `ZCODE_APP_VERSION` | 版本号 | 覆盖默认客户端版本，默认 `3.18.0`；marketing/touch 需要 `3.17.1+` |
 | `ZCODE_CAPTCHA_PARAM` | 验证码参数 | 为未单独填写验证码的账号提供全局值 |
 | `ZCODE_ACTIVATION` | `1` / `0` | 领取前补报激活事件，默认 `1` |
+| `ZCODE_MARKETING_RECHECK` | `1` / `0` | 领取后复查营销活动位，默认 `1` |
 | `PUSHPLUS_TOKEN` / `BARK_URL` | Token / URL | 可选推送 |
 | `WECOM_WEBHOOK` / `DINGTALK_WEBHOOK` / `DINGTALK_SECRET` | Webhook / 加签密钥 | 可选推送 |
 | `QL_URL` / `QL_TOKEN` | 面板地址 / 旧版面板 Token | 可选青龙通知 |
@@ -180,6 +186,14 @@ python zcode_login.py --no-verify
 | `--only 2` | 只跑第 2 个账号 |
 | `--no-notify` | 关闭本轮推送 |
 
+### ADVANCED 环境变量与行为
+
+- `ZCODE_APP_VERSION`：默认 `3.18.0`。`marketing/touch` 在 `3.16.x` 实测返回 0 条，`3.17.1+` 才下发营销套餐；低于 `3.17.1` 时脚本会明确跳过营销来源，billing 仍独立查询。
+- `ZCODE_MARKETING_RECHECK`：默认 `1`。领取后再次查询 marketing，活动位从 `deliveries` 消失会记为正向证据；该结果只作补充，不替代 claim 返回的领取对象。
+- 营销来源：脚本查询 `GET /api/v1/marketing/touch?seq=0`，递归收集 `claim_zcode_plan` 和嵌套 `zcode_plan`，受深度、节点数、活动条数和响应大小限制。
+- confirm 回执：仅对带 `campaign_ids` 的 marketing 套餐发送 `POST /api/v1/marketing/touch/action`。回执失败会记录在结果中，但不会把已成功的 claim 或 `1003` 改判失败。
+- captcha：领取仍可能需要 `X-Aliyun-Captcha-Verify-Param`。返回 `3007` 时补充账号行第四段或 `ZCODE_CAPTCHA_PARAM`；脚本不会自行伪造验证码。
+
 <a id="result"></a>
 
 ## ✅ 成功判据与状态码
@@ -189,6 +203,9 @@ python zcode_login.py --no-verify
 - `1005`：本轮名额或次数已用完；若服务端返回套餐结束时间，会给出下一轮重试不早于该时间。
 - `3001`：重点检查 `device_mid`、客户端版本与验证码是否过期。
 - `3007`：验证码未通过；补充 `X-Aliyun-Captcha-Verify-Param`。
+- 营销 confirm 失败只影响回执状态，不推翻已经成功的 claim 或 `1003`。
+- 活动尚未开始时显示上游 `starts_at` 对应的北京时间；活动已结束时不会发起领取。
+- 单一来源失败时会明确标注失败来源，另一来源仍继续处理；两来源均失败且台账无命中时返回明确查询错误。
 - 台账命中表示本机记录过已确认领取，可能中性显示“今日已领取”或“当前无新套餐”，不等同于本轮重新领取成功。
 - 无套餐且台账无命中时，可能是活动未开始、已结束或账号无资格，脚本按服务端现状报告，不推测成功。
 
@@ -225,7 +242,7 @@ python zcode_login.py --no-verify
 不能。bigmodel 与 z.ai 是不同账号体系，请分别登录并填写对应变量。
 
 **为什么套餐列表为空？**
-活动可能未开始或已结束、账号无资格，或客户端版本低于门槛。当前默认版本为 `3.16.2`，必要时用 `ZCODE_APP_VERSION` 覆盖。v1.0.6 起会合并本地领取台账：服务端预览为空但台账有当日已确认记录时，会中性提示“今日已领取”；没有台账命中时仍按服务端为空报告。
+活动可能未开始或已结束、账号无资格，或客户端版本低于门槛。当前默认版本为 `3.18.0`，marketing/touch 需要 `3.17.1+`，必要时用 `ZCODE_APP_VERSION` 覆盖。脚本会同时查询 billing 与 marketing，并合并本地领取台账；没有任一来源命中时仍按实际查询结果报告。
 
 **`1003` 是失败吗？**
 不是。它表示本期已经领取过，脚本按成功状态报告。
@@ -234,7 +251,7 @@ python zcode_login.py --no-verify
 
 ## 📦 版本与发布
 
-当前 CHANGELOG 记录最新版本为 `v1.0.6`（2026-11-04）。每个版本单独发布 Release，附完整包、脚本单文件与 `SHA256SUMS.txt`。下载页：[Releases](https://github.com/L0NE-6/ZCode-Daily/releases)。
+当前 CHANGELOG 记录最新版本为 `v1.1.0`（2026-11-04）。每个版本单独发布 Release，附完整包、脚本单文件与 `SHA256SUMS.txt`。下载页：[Releases](https://github.com/L0NE-6/ZCode-Daily/releases)。
 
 ## ⚠️ 说明
 
