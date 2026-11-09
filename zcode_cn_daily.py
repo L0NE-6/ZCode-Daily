@@ -58,9 +58,6 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-import urllib3
-urllib3.disable_warnings()
-
 try:
     sys.stdout.reconfigure(errors="replace")
 except Exception:
@@ -136,7 +133,7 @@ def request(method, url, headers=None, body=None, timeout=15, retries=3):
             session.trust_env = False
             return session.request(method, url, headers=headers or {},
                                    json=body if body is not None else None,
-                                   timeout=timeout, verify=False)
+                                   timeout=timeout)
         except Exception as error:
             last = error
             if attempt + 1 < retries:
@@ -1160,7 +1157,7 @@ def do_claim(account):
 def post_json(url, payload, timeout=20):
     session = requests.Session()
     session.trust_env = False
-    return session.post(url, json=payload, timeout=timeout, verify=False)
+    return session.post(url, json=payload, timeout=timeout)
 
 
 def _env(name):
@@ -1239,7 +1236,7 @@ def notify_ql(title, content):
         session = requests.Session()
         session.trust_env = False
         answer = session.post(endpoint + "/api/system/notify?token=" + token,
-                              json={"title": title, "content": content}, timeout=15, verify=False)
+                              json={"title": title, "content": content}, timeout=15)
         return str(json_of(answer).get("code")) in ("0", "200")
     except Exception:
         return False
