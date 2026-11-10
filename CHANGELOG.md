@@ -1,5 +1,13 @@
 # 更新日志
 
+## v1.1.1（2026-11-10）
+
+- 国内版、国际版与登录工具全部启用 requests 默认 TLS 证书校验，移除 7 处 `verify=False`。
+- 移除只为压制 `InsecureTransportWarning` 的 `urllib3.disable_warnings()` 与无用 import。
+- 已验证 `https://zcode.z.ai/` 证书链正常；接口、推送与青龙通知均使用可信 HTTPS。
+- 使用自签证书的青龙面板通知会失败，这是安全默认值；请更换可信证书或使用可信 HTTPS 地址。
+- 全套 `38` 项 unittest、`38 passed + 72 subtests` pytest、三脚本 `py_compile` 通过。
+
 ## v1.1.0（2026-11-04）
 
 - 国内版 / 国际版默认 `app_version` 提升到 `3.18.0`，仍支持 `ZCODE_APP_VERSION` 覆盖；营销来源最低要求为 `3.17.1`。

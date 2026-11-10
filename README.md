@@ -251,7 +251,7 @@ python zcode_login.py --no-verify
 
 ## 📦 版本与发布
 
-当前 CHANGELOG 记录最新版本为 `v1.1.0`（2026-11-04）。每个版本单独发布 Release，附完整包、脚本单文件与 `SHA256SUMS.txt`。下载页：[Releases](https://github.com/L0NE-6/ZCode-Daily/releases)。
+当前 CHANGELOG 记录最新版本为 `v1.1.1`（2026-11-10）。每个版本单独发布 Release，附完整包、脚本单文件与 `SHA256SUMS.txt`。下载页：[Releases](https://github.com/L0NE-6/ZCode-Daily/releases)。
 
 ## ⚠️ 说明
 
