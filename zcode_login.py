@@ -27,9 +27,6 @@ import webbrowser
 
 import requests
 
-import urllib3
-urllib3.disable_warnings()
-
 try:
     sys.stdout.reconfigure(errors="replace")
 except Exception:
@@ -69,7 +66,7 @@ def request(method, url, headers=None, body=None, timeout=20, retries=2):
             session.trust_env = False
             return session.request(method, url, headers=headers or {},
                                    json=body if body is not None else None,
-                                   timeout=timeout, verify=False)
+                                   timeout=timeout)
         except Exception as error:
             last = error
             if attempt + 1 < retries:
