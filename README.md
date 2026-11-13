@@ -6,6 +6,8 @@
 
 **读取 ZCode 国内版与国际版可领套餐，按优先级领取并回显有效期的单文件脚本。**
 
+> 当前版本：**v1.1.1**（2026-11-10） · 最新更新：移除 verify=False，国内版、国际版与登录工具统一 TLS 证书校验
+
 [简体中文](README.md) · [English](docs/README.en.md) · [繁體中文](docs/README.zh-Hant.md) · [日本語](docs/README.ja.md) · [한국어](docs/README.ko.md) · [Português (BR)](docs/README.pt-BR.md)
 
 <p>
